@@ -48,7 +48,10 @@ function toDto(p) {
     scheduledAt: p.scheduledAt || null, status: p.status,
     failureReason: p.failureReason || null, facebookPostId: p.facebookPostId || null,
     pageId: p.pageId || null,
-    media: media.mediaFor(p).map((f) => ({ url: f.url, mimetype: f.mimetype, filename: f.filename })),
+    media: media.mediaFor(p).map((f) => ({
+      url: f.url, mimetype: f.mimetype, filename: f.filename,
+      ...(f.posterUrl ? { posterUrl: f.posterUrl } : {}),
+    })),
   };
 }
 
