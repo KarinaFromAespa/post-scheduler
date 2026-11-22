@@ -46,7 +46,19 @@ object ApiFactory {
         val logging = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BASIC
         }
+        // Backend API key: sent as X-Api-Key on every call. The backend
+        // rejects /api/* without it once API_KEY is set on the VM. The
+        // key lives in BuildConfig (from ~/.gradle/gradle.properties,
+        // never in the repo); when it is empty no header is sent, so a
+        // backend without a key set still works.
+        val apiKey = okhttp3.Interceptor { chain ->
+            val req = chain.request().newBuilder().apply {
+                if (BuildConfig.API_KEY.isNotEmpty()) header("X-Api-Key", BuildConfig.API_KEY)
+            }.build()
+            chain.proceed(req)
+        }
         val client = OkHttpClient.Builder()
+            .addInterceptor(apiKey)
             .addInterceptor(logging)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)

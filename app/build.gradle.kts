@@ -17,7 +17,12 @@ android {
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Backend URL from gradle.properties; override in local.properties if needed.
-        buildConfigField("String", "BACKEND_URL", "\"${project.findProperty("planner.backend.url") ?: "http://129.225.82.58:3000"}\"")
+        buildConfigField("String", "BACKEND_URL", "\"${project.findProperty("planner.backend.url") ?: "https://postschedulerapp.duckdns.org"}\"")
+        // API key for the backend (X-Api-Key header). Empty is the
+        // placeholder — set the real key in ~/.gradle/gradle.properties
+        // (planner.api.key), machine-local, never in the repo. The backend
+        // rejects /api/* calls without it once API_KEY is set on the VM.
+        buildConfigField("String", "API_KEY", "\"${project.findProperty("planner.api.key") ?: ""}\"")
         // Facebook App ID for Facebook Login (Connect Page). "0" is a
         // placeholder — set the real App ID in gradle.properties or
         // local.properties (planner.facebook.app.id) before logging in.
