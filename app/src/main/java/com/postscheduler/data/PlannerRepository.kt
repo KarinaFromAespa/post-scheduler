@@ -123,12 +123,28 @@ class PlannerRepository(context: Context) {
     // tracks it; removing the photo calls deleteTempMedia so no orphan
     // is left on the server.
     suspend fun uploadTempMedia(uri: Uri): com.postscheduler.data.remote.TempMediaDto {
-        val file = File(appContext.cacheDir, "upload-${UUID.randomUUID()}")
+        // Send the file's real MIME type and keep its extension on the
+        // cache filename — the backend stores both, and the app and the
+        // website use them to tell a photo from a video (thumbnail, play
+        // badge, publish path). Sending application/octet-stream for
+        // everything made every file unreadable as a photo or a video.
+        val mimeType = appContext.contentResolver.getType(uri) ?: "application/octet-stream"
+        val ext = when {
+            mimeType == "image/jpeg" -> ".jpg"
+            mimeType == "image/png" -> ".png"
+            mimeType == "image/gif" -> ".gif"
+            mimeType == "image/webp" -> ".webp"
+            mimeType == "video/mp4" -> ".mp4"
+            mimeType == "video/quicktime" -> ".mov"
+            mimeType == "video/webm" -> ".webm"
+            else -> ""
+        }
+        val file = File(appContext.cacheDir, "upload-${UUID.randomUUID()}$ext")
         appContext.contentResolver.openInputStream(uri)?.use { input ->
             file.outputStream().use { input.copyTo(it) }
         }
         return try {
-            val body = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+            val body = file.asRequestBody(mimeType.toMediaTypeOrNull())
             val part = MultipartBody.Part.createFormData("file", file.name, body)
             api().uploadTempMedia(part)
         } finally {

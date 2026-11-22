@@ -92,6 +92,7 @@ dependencies {
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp.logging)
     implementation(libs.coil.compose)
+    implementation(libs.coil.video)
     implementation(libs.facebook.login)
     ksp(libs.androidx.room.compiler)
 }

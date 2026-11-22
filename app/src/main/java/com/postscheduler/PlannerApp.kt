@@ -1,6 +1,9 @@
 package com.postscheduler
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.decode.VideoFrameDecoder
 import com.facebook.FacebookSdk
 
 /**
@@ -11,8 +14,12 @@ import com.facebook.FacebookSdk
  * planner.facebook.client.token). Until then the app works normally
  * without Facebook, and the Connect Page screen says what is missing
  * instead of crashing.
+ *
+ * Also supplies the image loader: VideoFrameDecoder lets Coil pull a
+ * frame out of a video URL, so a video story or reel shows a thumbnail
+ * instead of a blank tile.
  */
-class PlannerApp : Application() {
+class PlannerApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         val appId = getString(R.string.facebook_app_id)
@@ -20,5 +27,11 @@ class PlannerApp : Application() {
         if (appId != "0" && clientToken.isNotBlank() && clientToken != "0") {
             FacebookSdk.sdkInitialize(this)
         }
+    }
+
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .components { add(VideoFrameDecoder.Factory()) }
+            .build()
     }
 }
