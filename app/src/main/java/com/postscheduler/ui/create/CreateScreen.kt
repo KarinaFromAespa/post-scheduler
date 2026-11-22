@@ -1,6 +1,7 @@
 package com.postscheduler.ui.create
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -299,7 +300,7 @@ fun CreateScreen(
             when (type) {
                 PostType.REEL -> singlePicker.launch("video/*")
                 PostType.STORY -> storyPicker.launch(
-                    ActivityResultContracts.PickVisualMedia.PickVisualMediaRequest(
+                    PickVisualMediaRequest(
                         ActivityResultContracts.PickVisualMedia.ImageAndVideo
                     )
                 )
