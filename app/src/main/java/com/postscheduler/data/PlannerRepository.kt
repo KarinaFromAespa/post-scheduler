@@ -39,6 +39,17 @@ class PlannerRepository(context: Context) {
     private val settings = com.postscheduler.data.remote.SettingsStore(context.applicationContext)
     private val appContext = context.applicationContext
 
+    // "video" when the picked file is a video (a reel, or a video story),
+    // "photo" when it is a photo, "" when there is no media. Read from
+    // the file's MIME type — the post type alone cannot tell a photo
+    // story from a video one.
+    private fun mediaKindFor(type: PostType, mediaUris: List<Uri>): String {
+        if (type == PostType.REEL) return "video"
+        if (mediaUris.isEmpty()) return ""
+        val mime = mediaUris.firstOrNull()?.let { appContext.contentResolver.getType(it) } ?: ""
+        return if (mime.startsWith("video/")) "video" else "photo"
+    }
+
     // Queue/drafts/published follow the selected Page: switching Pages
     // re-runs the query for that Page only, so one Page never sees
     // another Page's posts. flatMapLatest re-queries on every Page change.
@@ -144,7 +155,7 @@ class PlannerRepository(context: Context) {
             caption = caption.trim(),
             hashtags = "",
             mediaUris = mediaUris.joinToString(",") { it.toString() },
-            mediaKind = if (type == PostType.REEL) "video" else if (mediaUris.isNotEmpty()) "photo" else "",
+            mediaKind = mediaKindFor(type, mediaUris),
             // A draft keeps its planned time (if one was picked) — it just
             // doesn't publish until it is scheduled.
             scheduledAtMillis = scheduledAtMillis,
@@ -205,7 +216,7 @@ class PlannerRepository(context: Context) {
             type = type,
             caption = caption.trim(),
             mediaUris = if (mediaUris.isNotEmpty()) mediaUris.joinToString(",") { it.toString() } else post.mediaUris,
-            mediaKind = if (type == PostType.REEL) "video" else if (mediaUris.isNotEmpty()) "photo" else post.mediaKind,
+            mediaKind = if (mediaUris.isNotEmpty()) mediaKindFor(type, mediaUris) else post.mediaKind,
             scheduledAtMillis = scheduledAtMillis,
             status = if (saveAsDraft || scheduledAtMillis == null) PostStatus.DRAFT else PostStatus.SCHEDULED,
             failureReason = null,
@@ -316,10 +327,16 @@ private fun com.postscheduler.data.remote.PostDto.toLocal(): Post {
     // local row has no media at all, so the Publish cards show no photo
     // and editing a story shows no image to keep or replace.
     val mediaUrls = (media ?: emptyList()).mapNotNull { it.url }.filter { it.isNotBlank() }
+    val isVideo = (media ?: emptyList()).any { it.mimetype?.startsWith("video/") == true }
     return Post(
         id = id, type = type, caption = caption, hashtags = hashtags ?: "",
         mediaUris = mediaUrls.joinToString(","),
-        mediaKind = if (type == PostType.REEL) "video" else if (mediaUrls.isNotEmpty()) "photo" else "",
+        mediaKind = when {
+            type == PostType.REEL -> "video"
+            isVideo -> "video"
+            mediaUrls.isNotEmpty() -> "photo"
+            else -> ""
+        },
         scheduledAtMillis = millis, status = status,
         failureReason = failureReason, backendId = id, publishedPostId = facebookPostId,
         pageId = pageId

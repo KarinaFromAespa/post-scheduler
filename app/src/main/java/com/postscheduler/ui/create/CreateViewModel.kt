@@ -28,7 +28,8 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
     data class PickedMedia(
         val uri: Uri,
         val state: UploadState,
-        val tempId: String? = null
+        val tempId: String? = null,
+        val isVideo: Boolean = false
     )
 
     private val _media = MutableStateFlow<List<PickedMedia>>(emptyList())
@@ -37,12 +38,15 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         _media.map { list -> list.any { it.state == UploadState.UPLOADING } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    private fun isVideoUri(uri: Uri): Boolean =
+        app.contentResolver.getType(uri)?.startsWith("video/") == true
+
     // Upload each picked file to temp staging in the background. A failed
     // upload stays on the tile with a retry instead of failing silently.
     fun addMedia(uris: List<Uri>) {
         val fresh = uris.filter { uri -> _media.value.none { it.uri == uri } }
         if (fresh.isEmpty()) return
-        _media.value = _media.value + fresh.map { PickedMedia(it, UploadState.UPLOADING) }
+        _media.value = _media.value + fresh.map { PickedMedia(it, UploadState.UPLOADING, isVideo = isVideoUri(it)) }
         for (uri in fresh) {
             viewModelScope.launch {
                 runCatching { repo.uploadTempMedia(uri) }
@@ -215,10 +219,10 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
             .mapNotNull { it.tempId }
         // Effective media: newly picked files if any, otherwise the photos
         // already on the post being edited. Counting only new picks wrongly
-        // blocked editing a story that already has its one photo ("Add text
-        // or media first" / "A story needs exactly one photo"), and let a
-        // multi-photo post slip past the story check when no new photo was
-        // picked.
+        // blocked editing a story that already has its one photo or video
+        // ("Add text or media first" / "A story needs exactly one photo
+        // or video"), and let a multi-photo post slip past the story check
+        // when no new file was picked.
         val effectiveMediaCount = if (mediaUris.isNotEmpty()) mediaUris.size
             else editingPost?.mediaList?.size ?: 0
         if (caption.isBlank() && effectiveMediaCount == 0) {
@@ -230,7 +234,7 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
             return@launch
         }
         if (_type.value == PostType.STORY && effectiveMediaCount != 1) {
-            _error.value = "A story needs exactly one photo in v1."
+            _error.value = "A story needs exactly one photo or video."
             return@launch
         }
         // A picked file whose upload failed cannot be saved — it is not on

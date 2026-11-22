@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -67,9 +68,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Composer: feed post / reel (single MP4) / story (photo in v1).
+ * Composer: feed post / reel (single MP4) / story (one photo or video).
  * Post and reel take a caption (hashtags go in the caption); a story
- * has neither — it is just the photo. Crop is done by the system photo
+ * has neither — it is just the photo or video. Crop is done by the system photo
  * picker / editor before the URI reaches here — v1 does not ship its own
  * cropper. Schedule = a time today (hourly slots); Publish Now bypasses
  * the queue.
@@ -150,6 +151,14 @@ fun CreateScreen(
     // one; picking the same one again is a no-op.
     val singlePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) vm.replaceMedia(uri)
+    }
+
+    // A story takes one photo or one video, so it gets the visual-media
+    // picker (photos and videos together) instead of the image-only one.
+    val storyPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) vm.replaceMedia(uri)
     }
@@ -287,15 +296,22 @@ fun CreateScreen(
         Text("Media", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = {
-            val mime = if (type == PostType.REEL) "video/*" else "image/*"
-            if (type == PostType.STORY || type == PostType.REEL) singlePicker.launch(mime)
-            else picker.launch(mime)
+            when (type) {
+                PostType.REEL -> singlePicker.launch("video/*")
+                PostType.STORY -> storyPicker.launch(
+                    ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                )
+                else -> picker.launch("image/*")
+            }
         }) {
-            Icon(Icons.Default.Image, contentDescription = null)
+            Icon(
+                if (type == PostType.REEL) Icons.Default.Videocam else Icons.Default.Image,
+                contentDescription = null
+            )
             Spacer(Modifier.width(8.dp))
             Text(
-                if (type == PostType.REEL) "Pick video (MP4)"
-                else if (type == PostType.STORY) "Pick photo"
+                if (type == PostType.REEL) "Pick video"
+                else if (type == PostType.STORY) "Pick photo or video"
                 else "Pick photos"
             )
         }
@@ -309,7 +325,7 @@ fun CreateScreen(
                         failed = it.state == CreateViewModel.UploadState.FAILED
                     )
                 },
-                isVideo = type == PostType.REEL,
+                isVideo = type == PostType.REEL || pickedMedia.any { it.isVideo },
                 onRemove = { uri ->
                     pickedMedia.firstOrNull { it.uri.toString() == uri }?.let { vm.removeMedia(it) }
                 },
@@ -321,8 +337,8 @@ fun CreateScreen(
             Spacer(Modifier.height(4.dp))
             Text(
                 if (type == PostType.STORY && pickedMedia.size > 1)
-                    "A story uses one photo only — the first photo is kept. Remove the extra photos to continue."
-                else if (hasPendingUploads) "Uploading photos…"
+                    "A story uses one file only — the first one is kept. Remove the extra files to continue."
+                else if (hasPendingUploads) "Uploading…"
                 else "${pickedMedia.size} new selected — these replace the current photos on save.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -333,13 +349,13 @@ fun CreateScreen(
                 items = editPost.mediaList.map {
                     com.postscheduler.ui.components.ComposerMedia(uri = it)
                 },
-                isVideo = type == PostType.REEL,
+                isVideo = type == PostType.REEL || editPost.mediaKind == "video",
                 dimAfter = if (type == PostType.STORY) 1 else Int.MAX_VALUE
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 if (type == PostType.STORY && editPost.mediaList.size > 1)
-                    "This post has ${editPost.mediaList.size} photos — a story uses one photo only. Pick a new photo to replace them."
+                    "This post has ${editPost.mediaList.size} photos — a story uses one file only. Pick a new one to replace them."
                 else "${editPost.mediaList.size} photo${if (editPost.mediaList.size > 1) "s" else ""} on this post — pick new ones to replace them.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
