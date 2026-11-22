@@ -31,6 +31,7 @@ import java.util.UUID
  * If the backend is unreachable, the local copy is kept and the error is
  * surfaced to the UI — nothing is silently dropped.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PlannerRepository(context: Context) {
     private val db = AppDatabase.get(context.applicationContext)
     private val dao = db.postDao()
