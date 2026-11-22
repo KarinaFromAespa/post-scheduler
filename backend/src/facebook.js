@@ -32,10 +32,24 @@ async function graph(path, { params = {}, method = 'GET', token } = {}) {
     body = new URLSearchParams(params);
   }
   if (token) url.searchParams.set('access_token', token);
-  const res = await fetch(url, {
-    method,
-    ...(body ? { body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } } : {}),
-  });
+  // No timeout means a hung Facebook connection sticks the publisher on
+  // one post forever (the video-story poll only checks its deadline after
+  // a fetch returns). 30s is generous for a Graph call.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30 * 1000);
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      ...(body ? { body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } } : {}),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Facebook API timed out (30s)');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error?.message || `Facebook API ${res.status}`);
   return data;
@@ -121,10 +135,24 @@ async function publishVideoStory(file, page) {
   const videoId = start.video_id;
   const uploadUrl = start.upload_url;
   if (!videoId || !uploadUrl) throw new Error('Facebook did not start a video story upload session');
-  const uploadRes = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: { Authorization: `OAuth ${page.token}`, file_url: file.url },
-  });
+  // The upload has no timeout by default, so a hung connection would
+  // stick this story in "publishing" forever. 60s covers the fetch of
+  // even a large file_url video.
+  const uploadCtrl = new AbortController();
+  const uploadTimer = setTimeout(() => uploadCtrl.abort(), 60 * 1000);
+  let uploadRes;
+  try {
+    uploadRes = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { Authorization: `OAuth ${page.token}`, file_url: file.url },
+      signal: uploadCtrl.signal,
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Video story upload timed out (60s)');
+    throw e;
+  } finally {
+    clearTimeout(uploadTimer);
+  }
   const uploadBody = await uploadRes.json().catch(() => ({}));
   if (!uploadRes.ok) {
     throw new Error(uploadBody?.error?.message || `Video story upload failed (${uploadRes.status})`);

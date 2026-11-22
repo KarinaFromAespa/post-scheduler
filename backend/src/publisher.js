@@ -51,9 +51,20 @@ async function runOnce() {
   }
 }
 
+// The 1-minute timer fires whether or not the previous run finished. A
+// slow publish (a video story can take minutes with retries) let several
+// runs overlap, each grabbing a different due post, so all of them sat in
+// "publishing" at once and a stuck one blocked nothing cleanly. Runs are
+// serialized — a tick while one is in flight is skipped.
+let running = false;
 function start() {
-  setInterval(() => { runOnce().catch(console.error); }, 60 * 1000);
-  runOnce().catch(console.error);
+  setInterval(() => {
+    if (running) return;
+    running = true;
+    runOnce().catch(console.error).finally(() => { running = false; });
+  }, 60 * 1000);
+  running = true;
+  runOnce().catch(console.error).finally(() => { running = false; });
 }
 
 module.exports = { start, runOnce, publishOne };
