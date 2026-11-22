@@ -9,7 +9,17 @@ const facebook = require('./src/facebook');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve media with its real Content-Type. The stored files have no
+// extension, so express.static would serve everything as
+// application/octet-stream — and the app's image loader then cannot tell
+// a video from a photo, so video thumbnails never render. Detect the
+// type from the file's first bytes instead.
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders(res, filePath) {
+    const type = media.detectMime(filePath);
+    if (type) res.setHeader('Content-Type', type);
+  },
+}));
 
 // API key auth: every /api/* call must send X-Api-Key matching the
 // API_KEY env var. /uploads stays public (Facebook fetches media from it
