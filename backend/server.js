@@ -324,6 +324,24 @@ function sweepTempMedia() {
   if (reclaimed > 0) console.log(`[media] temp sweep reclaimed ${reclaimed} file(s)`);
 }
 
+// Retention: finished posts (published / failed) older than 30 days are
+// deleted from the JSON file + both databases, so the store never grows
+// forever. Drafts and scheduled posts are never touched — they are the
+// user's intent, not history. A post's age is measured from updatedAt
+// (when it was published / failed), falling back to createdAt.
+const POST_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+function pruneOldPosts() {
+  const cutoff = Date.now() - POST_RETENTION_MS;
+  const ids = [];
+  for (const p of store.allPosts()) {
+    if (p.status !== 'published' && p.status !== 'failed') continue;
+    if (Date.parse(p.updatedAt || p.createdAt || 0) >= cutoff) continue;
+    ids.push(p.id);
+  }
+  for (const id of ids) store.deletePost(id);
+  if (ids.length > 0) console.log(`[store] retention pruned ${ids.length} post(s) older than 30 days`);
+}
+
 async function start() {
   await store.init();
   // Restore any local media file that is missing (e.g. after a VM rebuild)
@@ -334,6 +352,9 @@ async function start() {
   // Reclaim staged files abandoned before a save, on startup and hourly.
   sweepTempMedia();
   setInterval(sweepTempMedia, 60 * 60 * 1000);
+  // Drop finished posts older than 30 days, on startup and hourly.
+  pruneOldPosts();
+  setInterval(pruneOldPosts, 60 * 60 * 1000);
   app.listen(PORT, () => {
     console.log(`facebook-post-planner-backend listening on :${PORT}`);
     console.log(`facebook configured: ${facebook.configured()}`);
