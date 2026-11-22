@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
@@ -110,6 +111,7 @@ fun PublishScreen(
     val queue by vm.queue.collectAsState(initial = emptyList())
     val paused by vm.paused.collectAsState()
     val error by vm.error.collectAsState()
+    val isRefreshing by vm.refreshing.collectAsState()
 
     // "Update schedule" state: the post being moved, and the date/time
     // picker flow (date first, then time — same as the composer).
@@ -254,11 +256,19 @@ fun PublishScreen(
         val failedNoTime = filteredQueue.filter { it.status == PostStatus.FAILED && it.scheduledAtMillis == null }
         val allGroups = if (failedNoTime.isNotEmpty()) listOf("Failed" to failedNoTime) + dayGroups else dayGroups
 
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+        // Pull down to re-pull the queue from the backend, so posts
+        // scheduled on the website (or changed elsewhere) show up
+        // without leaving the tab.
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = { vm.refresh() },
+            modifier = Modifier.weight(1f)
         ) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
             if (failed.isNotEmpty()) {
                 item {
                     Row(
@@ -366,6 +376,7 @@ fun PublishScreen(
                     }
                 }
             }
+        }
         }
 
         // "Update schedule" picker: date first, then time. The pickers open

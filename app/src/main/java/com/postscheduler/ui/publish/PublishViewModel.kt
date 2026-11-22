@@ -19,12 +19,11 @@ class PublishViewModel(app: Application) : AndroidViewModel(app) {
     val paused: StateFlow<Boolean> = _paused.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
     init {
-        viewModelScope.launch {
-            runCatching { _paused.value = repo.queuePaused() }
-            runCatching { repo.refreshQueue() }.onFailure { _error.value = it.message }
-        }
+        refresh()
     }
 
     /** Re-pull the queue from the backend. Called when the Publish tab is
@@ -32,8 +31,14 @@ class PublishViewModel(app: Application) : AndroidViewModel(app) {
      * first created) appear — init only runs once, and the ViewModel is
      * kept across tab switches, so init alone never re-syncs. */
     fun refresh() = viewModelScope.launch {
-        runCatching { _paused.value = repo.queuePaused() }
-        runCatching { repo.refreshQueue() }.onFailure { _error.value = it.message }
+        if (_refreshing.value) return@launch
+        _refreshing.value = true
+        try {
+            runCatching { _paused.value = repo.queuePaused() }
+            runCatching { repo.refreshQueue() }.onFailure { _error.value = it.message }
+        } finally {
+            _refreshing.value = false
+        }
     }
 
     fun togglePause() = viewModelScope.launch {
