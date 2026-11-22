@@ -21,15 +21,43 @@ function publicBaseUrl() {
   return (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
 }
 
+// Detect a file's real type from its first bytes. Uploads arrive with
+// the wrong mimetype when the client sends application/octet-stream
+// (the app did that for every file until 2026-11-22), and the stored
+// files have no extension, so neither the stored mimetype nor the
+// filename can be trusted — the content is the only reliable signal.
+// Used for the DTO and for the /uploads Content-Type, so the app and
+// the website can tell a photo from a video and show a thumbnail.
+function detectMime(filePath) {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(12);
+    fs.readSync(fd, buf, 0, 12, 0);
+    fs.closeSync(fd);
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+    if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+    if (buf.toString('ascii', 4, 8) === 'ftyp') return 'video/mp4';
+  } catch { /* file gone — fall through */ }
+  return null;
+}
+
 function mediaFor(post) {
   const base = publicBaseUrl();
-  return (post.mediaFiles || []).map((f) => ({
-    ...f,
-    // Facebook must be able to fetch the file, so the URL is absolute once
-    // PUBLIC_BASE_URL is set (the VM's public address). Without it the
-    // relative path still works through the website's /uploads proxy.
-    url: f.url || `${base}/uploads/${path.basename(f.path)}`,
-  }));
+  return (post.mediaFiles || []).map((f) => {
+    const mimetype = (f.mimetype && f.mimetype !== 'application/octet-stream')
+      ? f.mimetype
+      : (f.path ? detectMime(f.path) : null) || f.mimetype;
+    return {
+      ...f,
+      mimetype,
+      // Facebook must be able to fetch the file, so the URL is absolute once
+      // PUBLIC_BASE_URL is set (the VM's public address). Without it the
+      // relative path still works through the website's /uploads proxy.
+      url: f.url || `${base}/uploads/${path.basename(f.path)}`,
+    };
+  });
 }
 
 function objectNameFor(postId) {
@@ -147,4 +175,4 @@ async function ensureLocalFiles(post) {
   }
 }
 
-module.exports = { upload, mediaFor, addMedia, deleteMedia, ensureLocalFiles, addTempMedia, deleteTempMedia, tempMediaUrl };
+module.exports = { upload, mediaFor, addMedia, deleteMedia, ensureLocalFiles, addTempMedia, deleteTempMedia, tempMediaUrl, detectMime };
