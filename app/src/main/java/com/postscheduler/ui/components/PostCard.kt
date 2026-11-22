@@ -73,7 +73,7 @@ private fun statusColors(status: PostStatus): Pair<Color, Color> {
 }
 
 /**
- * Buffer-style queue card: type + status pills, a 3-dot menu for the
+ * Queue card: type + status pills, a 3-dot menu for the
  * per-post actions, a caption snippet, the media collage, and the post's
  * exact scheduled time. The time is on the card itself — the Publish tab
  * groups by day, so no header carries a time for it.

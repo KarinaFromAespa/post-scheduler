@@ -93,7 +93,7 @@ private fun endOfDay(millis: Long): Long {
 private fun shortDate(millis: Long): String = shortDateFmt.format(Date(millis))
 
 /**
- * Publish tab = home. Buffer-style timeline grouped by day: each day gets
+ * Publish tab = home. Timeline grouped by day: each day gets
  * a header (Today, Tomorrow, or the date), then its cards, each showing
  * its exact scheduled time. Only days that actually have a scheduled post
  * are shown. Multiple items can share a day — each keeps its own

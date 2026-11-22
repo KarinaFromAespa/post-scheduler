@@ -64,7 +64,7 @@ class PageViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Facebook Login, the standard PostPlanner/Buffer way to connect a Page:
+     * Facebook Login to connect a Page:
      * the user signs in with Facebook, grants the Page permissions, and the
      * app lists the Pages they manage via /me/accounts — no manual Page ID.
      * The picked Page's token is handed to the backend (POST /api/pages/connect)

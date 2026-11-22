@@ -28,7 +28,7 @@ import com.postscheduler.data.local.Post
 import com.postscheduler.ui.components.PostCard
 
 /**
- * Drafts tab — a dedicated place to see saved drafts, like Buffer.
+ * Drafts tab — a dedicated place to see saved drafts.
  * A draft has Edit (finish it in Create, then schedule it) and Delete.
  * Drafts are separate from the queue: they have no time and never publish
  * until the user schedules them.

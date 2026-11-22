@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 
 /**
- * Buffer-style media collage: one large photo left, up to two stacked
+ * Media collage: one large photo left, up to two stacked
  * right, with a play badge on video and an optional remove button per
  * photo (composer). A "+N" overlay covers the last thumb when there are
  * more than three.

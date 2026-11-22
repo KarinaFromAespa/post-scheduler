@@ -41,7 +41,7 @@ import com.facebook.CallbackManager
 import com.postscheduler.ui.components.PageAvatar
 
 /**
- * Connect a Facebook Page — the standard PostPlanner/Buffer way: sign in
+ * Connect a Facebook Page: sign in
  * with Facebook, grant the Page permissions, and pick one of the Pages the
  * account manages. The Page's token goes to the backend so the server can
  * publish as that Page.

@@ -169,7 +169,7 @@ fun CreateScreen(
         Text(if (editPost != null) "Edit post" else "Create", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(16.dp))
 
-        // Posting to — Page avatar + name, like Buffer's channel row.
+        // Posting to — Page avatar + name.
         Card(
             Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),

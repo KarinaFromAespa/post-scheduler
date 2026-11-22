@@ -1,6 +1,6 @@
 # Post Scheduler
 
-A Buffer-style scheduler for Facebook Pages: compose a feed post, reel, or story once, queue it for a time, and let the backend publish it for you. No queue cap, multiple items per slot, and short-notice scheduling (2–10 minutes ahead) via its own 1-minute publisher — not Facebook's native scheduling, which needs 10+ minutes.
+A scheduler for Facebook Pages: compose a feed post, reel, or story once, queue it for a time, and let the backend publish it for you. No queue cap, multiple items per slot, and short-notice scheduling (2–10 minutes ahead) via its own 1-minute publisher — not Facebook's native scheduling, which needs 10+ minutes.
 
 This repo holds the **Android app** (`app/`, Kotlin + Jetpack Compose) and the **backend** (`backend/`, Node + Express) that owns the queue, the publisher, and media storage. A matching **website** lives in a separate repo: [`post-scheduler-web`](https://github.com/KarinaFromAespa/post-scheduler-web) — same backend, same spec, no build step.
 
@@ -11,7 +11,7 @@ This repo holds the **Android app** (`app/`, Kotlin + Jetpack Compose) and the *
 - **Queue & publish** — schedule posts, reels, and stories for a time; the backend publishes them on schedule. Multiple items can share one time slot, each with its own status and failure.
 - **Short-notice scheduling** — 2–10 minutes ahead works, because the backend's 1-minute publisher (not Facebook native scheduling) does the publishing.
 - **Publish Now** — bypasses the queue entirely and publishes immediately.
-- **Pause / Resume queue** — holds all scheduled posts without deleting them (Buffer-style).
+- **Pause / Resume queue** — holds all scheduled posts without deleting them.
 - **Drafts** — a separate state; a draft keeps its planned time so it can be scheduled later without re-picking it.
 - **Background media upload** — a photo starts uploading the moment it is picked, so saving never waits on an upload. A circular progress overlay shows the upload on the tile; removing a picked photo deletes it from the server too. Abandoned uploads are reclaimed automatically.
 - **Per-Page queues** — each connected Facebook Page has its own queue and drafts; switching Pages switches the list.

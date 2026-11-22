@@ -4,7 +4,7 @@ This is the `app/` side of the monorepo [`KarinaFromAespa/post-scheduler`](https
 
 ## What it does
 
-- **Publish tab (home):** Today list, hourly slots, one card per scheduled item (time / caption / media collage, status chip, 3-dot menu: Publish now / Retry / Update schedule / Edit / Delete). Multiple items can share a slot, each with its own status and failure. Pause / Resume queue (Buffer-style, nothing deleted).
+- **Publish tab (home):** Today list, hourly slots, one card per scheduled item (time / caption / media collage, status chip, 3-dot menu: Publish now / Retry / Update schedule / Edit / Delete). Multiple items can share a slot, each with its own status and failure. Pause / Resume queue (nothing deleted).
 - **Create tab:** composer for feed post / reel (single MP4) / story (one photo). Caption only — hashtags go in the caption box; there is no separate hashtag field. Stories have no caption. Schedule to a time, save as draft (keeps a picked time as the draft's planned time), or Publish Now (bypasses the queue entirely).
 - **Background media upload:** a photo starts uploading the moment it is picked, so saving never waits on an upload. The tile shows a circular progress overlay while it uploads; a failed upload shows a retry. Removing a picked photo deletes it from the server too. The save buttons stay disabled while any upload is in flight.
 - **Drafts tab:** saved drafts, with Edit / Delete and Publish now.
