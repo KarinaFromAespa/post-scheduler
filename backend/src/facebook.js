@@ -125,11 +125,12 @@ async function publishStory(post, mediaFiles, page) {
 }
 
 // Video stories need a three-phase upload: open a session, upload the
-// file to the upload URL Facebook returns, then publish once it has
-// finished processing. The video bytes are uploaded directly (resumable
-// protocol, Offset header) — the file_url shortcut left the video
-// unprocessed on Facebook's side: the upload reported success but
-// processing_phase stayed "not_started" forever, so the story timed out.
+// file to the upload URL Facebook returns, then finish to publish it.
+// The video bytes are uploaded directly (resumable protocol) — the
+// file_url shortcut and the byte upload both get the file there, but the
+// poll must wait for the UPLOAD to finish, not for processing: Facebook
+// only starts processing/publishing once finish is called, so waiting
+// for processing_phase here timed out forever ("not_started").
 async function publishVideoStory(file, page) {
   const start = await graph(`/${page.id}/video_stories`, {
     params: { upload_phase: 'start' }, method: 'POST', token: page.token,
@@ -170,17 +171,19 @@ async function publishVideoStory(file, page) {
   if (!uploadRes.ok) {
     throw new Error(uploadBody?.error?.message || uploadBody?.debug_info?.message || `Video story upload failed (${uploadRes.status})`);
   }
-  // Wait for Facebook to finish processing the video — publishing before
-  // that fails. Poll the video status, giving up after 90 seconds.
-  const deadline = Date.now() + 90 * 1000;
+  // Wait until Facebook confirms the upload itself is complete, then
+  // finish (publish). Processing only starts once finish is called, so
+  // polling for processing_phase here would wait forever. Give the
+  // upload up to 60 seconds to settle after the POST returned.
+  const deadline = Date.now() + 60 * 1000;
   for (;;) {
     const status = await graph(`/${videoId}`, {
       params: { fields: 'status' }, token: page.token,
     });
-    const phase = status?.status?.processing_phase?.status;
+    const phase = status?.status?.uploading_phase?.status;
     if (phase === 'complete') break;
-    if (phase === 'error') throw new Error('Facebook failed to process the story video');
-    if (Date.now() > deadline) throw new Error('Timed out waiting for Facebook to process the story video');
+    if (phase === 'error') throw new Error('Facebook failed to receive the story video');
+    if (Date.now() > deadline) throw new Error('Timed out waiting for Facebook to receive the story video');
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
   const finish = await graph(`/${page.id}/video_stories`, {
