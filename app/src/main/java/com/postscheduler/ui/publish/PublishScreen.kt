@@ -1,6 +1,7 @@
 package com.postscheduler.ui.publish
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -245,12 +246,46 @@ fun PublishScreen(
             }
             .sortedBy { it.second.first().scheduledAtMillis }
 
+        // Failed posts, from the whole queue so the banner alerts even
+        // when a date filter hides them. Tapping it shows everything.
+        val failed = queue.filter { it.status == PostStatus.FAILED }
+        // A Publish Now that failed has no scheduled time, so it has no
+        // day to group under — it gets its own group at the top.
+        val failedNoTime = filteredQueue.filter { it.status == PostStatus.FAILED && it.scheduledAtMillis == null }
+        val allGroups = if (failedNoTime.isNotEmpty()) listOf("Failed" to failedNoTime) + dayGroups else dayGroups
+
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            if (dayGroups.isEmpty()) {
+            if (failed.isNotEmpty()) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clickable { filter = PublishFilter.All }
+                            .background(
+                                MaterialTheme.colorScheme.errorContainer,
+                                androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                            ).padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (failed.size == 1) "1 post failed to publish"
+                            else "${failed.size} posts failed to publish",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            "Tap to see",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+            if (allGroups.isEmpty()) {
                 item {
                     Column(
                         Modifier.fillMaxWidth().padding(top = 48.dp),
@@ -285,7 +320,7 @@ fun PublishScreen(
                     }
                 }
             }
-            items(dayGroups) { (day, atDay) ->
+            items(allGroups) { (day, atDay) ->
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
