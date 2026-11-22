@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import org.json.JSONObject
+import retrofit2.HttpException
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -207,8 +209,9 @@ class PlannerRepository(context: Context) {
                 runCatching { api().publishNow(dto.id) }
             }
         }.onFailure { e ->
-            dao.upsert(post.copy(status = PostStatus.FAILED, failureReason = e.message))
-            throw e
+            val msg = backendMessage(e)
+            dao.upsert(post.copy(status = PostStatus.FAILED, failureReason = msg))
+            throw Exception(msg)
         }
         return post
     }
@@ -260,8 +263,9 @@ class PlannerRepository(context: Context) {
                 )
             )
         }.onFailure { e ->
-            dao.upsert(updated.copy(status = PostStatus.FAILED, failureReason = e.message))
-            throw e
+            val msg = backendMessage(e)
+            dao.upsert(updated.copy(status = PostStatus.FAILED, failureReason = msg))
+            throw Exception(msg)
         }
         return updated
     }
@@ -288,8 +292,9 @@ class PlannerRepository(context: Context) {
                 )
             )
         }.onFailure { e ->
-            dao.upsert(updated.copy(status = PostStatus.FAILED, failureReason = e.message))
-            throw e
+            val msg = backendMessage(e)
+            dao.upsert(updated.copy(status = PostStatus.FAILED, failureReason = msg))
+            throw Exception(msg)
         }
         return updated
     }
@@ -340,6 +345,23 @@ class PlannerRepository(context: Context) {
             val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
             fmt.timeZone = TimeZone.getTimeZone("UTC")
             return fmt.format(Date(millis))
+        }
+
+        // The backend returns a JSON {"error": "..."} body on a 400, but
+        // Retrofit's HttpException message is just "HTTP 400" — the real
+        // reason (e.g. "Pick a time at least 2 minutes ahead.") is in the
+        // body. Pull it out so the user sees why the save failed instead
+        // of a bare status code.
+        fun backendMessage(e: Throwable): String {
+            val http = e as? HttpException
+            val body = try { http?.response()?.errorBody()?.string() } catch (_: Exception) { null }
+            if (!body.isNullOrBlank()) {
+                try {
+                    val msg = JSONObject(body).optString("error")
+                    if (msg.isNotBlank()) return msg
+                } catch (_: Exception) { }
+            }
+            return e.message ?: "Sync failed"
         }
     }
 }

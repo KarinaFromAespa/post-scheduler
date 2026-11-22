@@ -207,6 +207,7 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         _schedule.value = defaultScheduleMillis()
         _saveAsDraft.value = false
         _dirty.value = false
+        _error.value = null
     }
 
     // The post being edited, if any — set by loadForEdit. When set, save()
@@ -235,6 +236,7 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         _schedule.value = post.scheduledAtMillis
         _saveAsDraft.value = false
         _dirty.value = false
+        _error.value = null
     }
 
     fun clearEdit() {
@@ -242,6 +244,7 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         editingPost = null
         _keptExisting.value = emptyList()
         _dirty.value = false
+        _error.value = null
     }
 
     /** Next hourly slot today, defaulting to the next hour (min 2 min ahead is enforced by the backend). */
@@ -260,6 +263,9 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         val caption = if (_type.value == PostType.STORY) "" else _caption.value
         val scheduledAtMillis = _schedule.value
         val saveAsDraft = _saveAsDraft.value
+        // A retry starts clean — otherwise a failed save's error sticks
+        // around on the next screen (the ViewModel is activity-scoped).
+        _error.value = null
         // Wait for any background upload still in flight — a post cannot
         // link to a file that is not on the server yet. The save button
         // is disabled while uploads run, so this is a safety net.
@@ -299,6 +305,15 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         // the server. The tile shows a retry.
         if (picked.any { it.state == UploadState.FAILED }) {
             _error.value = "One photo failed to upload — retry it or remove it."
+            return@launch
+        }
+        // The backend rejects a scheduled time less than 2 minutes ahead.
+        // Check it here first, so the user is told immediately instead of
+        // waiting for the save and getting a backend error. Drafts and
+        // Publish now don't schedule, so they skip this.
+        val willSchedule = !publishNow && !saveAsDraft && scheduledAtMillis != null
+        if (willSchedule && scheduledAtMillis!! < System.currentTimeMillis() + 2 * 60 * 1000) {
+            _error.value = "Pick a time at least 2 minutes ahead."
             return@launch
         }
         _saving.value = true
