@@ -13,6 +13,7 @@ import com.postscheduler.data.remote.InsightsDto
 import com.postscheduler.data.remote.PlannerApi
 import com.postscheduler.data.remote.toApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -37,9 +38,12 @@ class PlannerRepository(context: Context) {
     private val settings = com.postscheduler.data.remote.SettingsStore(context.applicationContext)
     private val appContext = context.applicationContext
 
-    fun queue(): Flow<List<Post>> = dao.queue()
-    fun drafts(): Flow<List<Post>> = dao.drafts()
-    fun published(): Flow<List<Post>> = dao.published()
+    // Queue/drafts/published follow the selected Page: switching Pages
+    // re-runs the query for that Page only, so one Page never sees
+    // another Page's posts. flatMapLatest re-queries on every Page change.
+    fun queue(): Flow<List<Post>> = settings.pageId.flatMapLatest { pageId -> dao.queue(pageId) }
+    fun drafts(): Flow<List<Post>> = settings.pageId.flatMapLatest { pageId -> dao.drafts(pageId) }
+    fun published(): Flow<List<Post>> = settings.pageId.flatMapLatest { pageId -> dao.published(pageId) }
     fun insights(): Flow<List<InsightEntity>> = insightDao.all()
 
     private fun api(): PlannerApi = ApiFactory.create(settings.currentBackendUrl())
@@ -125,7 +129,11 @@ class PlannerRepository(context: Context) {
                 publishNow -> PostStatus.PUBLISHING
                 saveAsDraft || scheduledAtMillis == null -> PostStatus.DRAFT
                 else -> PostStatus.SCHEDULED
-            }
+            },
+            // Tag the local row with the Page now, so it lands in the right
+            // Page's queue immediately instead of waiting for the next
+            // backend sync to fill it in.
+            pageId = currentPageId()
         )
         dao.upsert(post)
         // Best-effort backend sync; local copy stays even if this fails.
@@ -292,7 +300,8 @@ private fun com.postscheduler.data.remote.PostDto.toLocal(): Post {
     return Post(
         id = id, type = type, caption = caption, hashtags = hashtags ?: "",
         scheduledAtMillis = millis, status = status,
-        failureReason = failureReason, backendId = id, publishedPostId = facebookPostId
+        failureReason = failureReason, backendId = id, publishedPostId = facebookPostId,
+        pageId = pageId
     )
 }
 

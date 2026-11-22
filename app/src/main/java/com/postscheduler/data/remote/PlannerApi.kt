@@ -22,7 +22,8 @@ data class PostDto(
     val scheduledAt: String?, // ISO-8601
     val status: String,
     val failureReason: String?,
-    val facebookPostId: String?
+    val facebookPostId: String?,
+    val pageId: String? = null
 )
 
 data class CreatePostRequest(

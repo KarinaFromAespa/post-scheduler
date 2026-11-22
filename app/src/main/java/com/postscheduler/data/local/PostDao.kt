@@ -9,17 +9,20 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PostDao {
-    @Query("SELECT * FROM posts WHERE status IN ('SCHEDULED', 'FAILED', 'PUBLISHING') ORDER BY scheduledAtMillis ASC, createdAtMillis ASC")
-    fun queue(): Flow<List<Post>>
+    // Only the selected Page's posts. A post with no Page (created before
+    // Page tracking, or from a client that didn't send one) still shows,
+    // so legacy posts don't vanish — new posts always carry a Page.
+    @Query("SELECT * FROM posts WHERE status IN ('SCHEDULED', 'FAILED', 'PUBLISHING') AND (pageId = :pageId OR pageId IS NULL) ORDER BY scheduledAtMillis ASC, createdAtMillis ASC")
+    fun queue(pageId: String?): Flow<List<Post>>
 
-    @Query("SELECT * FROM posts WHERE status = 'DRAFT' ORDER BY updatedAtMillis DESC")
-    fun drafts(): Flow<List<Post>>
+    @Query("SELECT * FROM posts WHERE status = 'DRAFT' AND (pageId = :pageId OR pageId IS NULL) ORDER BY updatedAtMillis DESC")
+    fun drafts(pageId: String?): Flow<List<Post>>
 
     @Query("SELECT * FROM posts WHERE id = :id LIMIT 1")
     suspend fun get(id: String): Post?
 
-    @Query("SELECT * FROM posts WHERE status = 'PUBLISHED' ORDER BY scheduledAtMillis DESC")
-    fun published(): Flow<List<Post>>
+    @Query("SELECT * FROM posts WHERE status = 'PUBLISHED' AND (pageId = :pageId OR pageId IS NULL) ORDER BY scheduledAtMillis DESC")
+    fun published(pageId: String?): Flow<List<Post>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(post: Post)

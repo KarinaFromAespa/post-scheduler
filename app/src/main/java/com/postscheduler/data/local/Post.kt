@@ -20,6 +20,7 @@ data class Post(
     val failureReason: String? = null,
     val backendId: String? = null,
     val publishedPostId: String? = null, // Facebook post id after publish
+    val pageId: String? = null, // Facebook Page this post belongs to — the queue/drafts only show the selected Page's posts
     val createdAtMillis: Long = System.currentTimeMillis(),
     val updatedAtMillis: Long = System.currentTimeMillis()
 ) {
