@@ -11,12 +11,112 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Calendar
 
 class CreateViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = PlannerRepository(app)
+
+    // A picked photo/video and its background-upload state. The file is
+    // uploaded to temp staging the moment it is picked, so saving never
+    // waits on an upload; tempId is what the post links to on save.
+    enum class UploadState { UPLOADING, DONE, FAILED }
+    data class PickedMedia(
+        val uri: Uri,
+        val state: UploadState,
+        val tempId: String? = null
+    )
+
+    private val _media = MutableStateFlow<List<PickedMedia>>(emptyList())
+    val media: StateFlow<List<PickedMedia>> = _media.asStateFlow()
+    val hasPendingUploads: StateFlow<Boolean> =
+        _media.map { list -> list.any { it.state == UploadState.UPLOADING } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    // Upload each picked file to temp staging in the background. A failed
+    // upload stays on the tile with a retry instead of failing silently.
+    fun addMedia(uris: List<Uri>) {
+        val fresh = uris.filter { uri -> _media.value.none { it.uri == uri } }
+        if (fresh.isEmpty()) return
+        _media.value = _media.value + fresh.map { PickedMedia(it, UploadState.UPLOADING) }
+        for (uri in fresh) {
+            viewModelScope.launch {
+                runCatching { repo.uploadTempMedia(uri) }
+                    .onSuccess { dto ->
+                        _media.value = _media.value.map {
+                            if (it.uri == uri) it.copy(state = UploadState.DONE, tempId = dto.id) else it
+                        }
+                    }
+                    .onFailure {
+                        _media.value = _media.value.map {
+                            if (it.uri == uri) it.copy(state = UploadState.FAILED) else it
+                        }
+                    }
+            }
+        }
+    }
+
+    fun retryUpload(picked: PickedMedia) {
+        _media.value = _media.value.map {
+            if (it.uri == picked.uri) it.copy(state = UploadState.UPLOADING, tempId = null) else it
+        }
+        viewModelScope.launch {
+            runCatching { repo.uploadTempMedia(picked.uri) }
+                .onSuccess { dto ->
+                    _media.value = _media.value.map {
+                        if (it.uri == picked.uri) it.copy(state = UploadState.DONE, tempId = dto.id) else it
+                    }
+                }
+                .onFailure {
+                    _media.value = _media.value.map {
+                        if (it.uri == picked.uri) it.copy(state = UploadState.FAILED) else it
+                    }
+                }
+        }
+    }
+
+    // Remove a picked photo. If it already reached temp staging, delete it
+    // from the server too so no orphan is left behind. Best-effort: the
+    // tile is gone either way.
+    fun removeMedia(picked: PickedMedia) {
+        _media.value = _media.value.filter { it.uri != picked.uri }
+        picked.tempId?.let { id ->
+            viewModelScope.launch { repo.deleteTempMedia(id) }
+        }
+    }
+
+    // Replace the current picks with a single file (story/reel). The old
+    // staged file is deleted from the server.
+    fun replaceMedia(uri: Uri) {
+        val old = _media.value
+        _media.value = emptyList()
+        for (picked in old) {
+            picked.tempId?.let { id ->
+                viewModelScope.launch { repo.deleteTempMedia(id) }
+            }
+        }
+        addMedia(listOf(uri))
+    }
+
+    fun clearMedia() {
+        val old = _media.value
+        _media.value = emptyList()
+        for (picked in old) {
+            picked.tempId?.let { id ->
+                viewModelScope.launch { repo.deleteTempMedia(id) }
+            }
+        }
+    }
+
+    // After a successful save the staged files are claimed into the post,
+    // so just drop the local list — do not delete them from the server.
+    private fun resetMediaAfterSave() {
+        _media.value = emptyList()
+    }
 
     val pageName: StateFlow<String?> =
         repo.selectedPageName.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -75,11 +175,15 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
     val editing: Boolean get() = editingPost != null
 
     fun loadForEdit(post: com.postscheduler.data.local.Post) {
+        clearMedia()
         editingPost = post
         _type.value = post.type
     }
 
-    fun clearEdit() { editingPost = null }
+    fun clearEdit() {
+        clearMedia()
+        editingPost = null
+    }
 
     /** Next hourly slot today, defaulting to the next hour (min 2 min ahead is enforced by the backend). */
     fun defaultScheduleMillis(): Long {
@@ -91,12 +195,24 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
 
     fun save(
         caption: String,
-        hashtags: String,
-        mediaUris: List<Uri>,
         scheduledAtMillis: Long?,
         publishNow: Boolean,
         saveAsDraft: Boolean = false
     ) = viewModelScope.launch {
+        // Wait for any background upload still in flight — a post cannot
+        // link to a file that is not on the server yet. The save button
+        // is disabled while uploads run, so this is a safety net.
+        val settled = withTimeoutOrNull(60_000) {
+            media.first { list -> list.none { it.state == UploadState.UPLOADING } }
+        }
+        if (settled == null) {
+            _error.value = "Still uploading — try again in a moment."
+            return@launch
+        }
+        val picked = _media.value
+        val mediaUris = picked.map { it.uri }
+        val tempMediaIds = picked.filter { it.state == UploadState.DONE }
+            .mapNotNull { it.tempId }
         // Effective media: newly picked files if any, otherwise the photos
         // already on the post being edited. Counting only new picks wrongly
         // blocked editing a story that already has its one photo ("Add text
@@ -117,17 +233,26 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
             _error.value = "A story needs exactly one photo in v1."
             return@launch
         }
+        // A picked file whose upload failed cannot be saved — it is not on
+        // the server. The tile shows a retry.
+        if (picked.any { it.state == UploadState.FAILED }) {
+            _error.value = "One photo failed to upload — retry it or remove it."
+            return@launch
+        }
         _saving.value = true
         runCatching {
             val editing = editingPost
             if (editing != null) {
-                val updated = repo.updatePost(editing, _type.value, caption, hashtags, mediaUris, scheduledAtMillis, saveAsDraft)
+                val updated = repo.updatePost(editing, _type.value, caption, mediaUris, tempMediaIds, scheduledAtMillis, saveAsDraft)
                 if (publishNow) repo.publishNow(updated)
                 editingPost = null
             } else {
-                repo.createPost(_type.value, caption, hashtags, mediaUris, scheduledAtMillis, publishNow, saveAsDraft)
+                repo.createPost(_type.value, caption, mediaUris, tempMediaIds, scheduledAtMillis, publishNow, saveAsDraft)
             }
-        }.onSuccess { _done.value = true }
+        }.onSuccess {
+            resetMediaAfterSave()
+            _done.value = true
+        }
             .onFailure { _error.value = "Saved locally, backend sync failed: ${it.message}" }
         _saving.value = false
     }

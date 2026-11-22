@@ -29,11 +29,12 @@ data class PostDto(
 data class CreatePostRequest(
     val type: String,
     val caption: String,
-    val hashtags: String?,
+    val hashtags: String? = null,
     val scheduledAt: String?, // ISO-8601, null = draft
     val status: String,
     val publishNow: Boolean = false,
-    val pageId: String? = null
+    val pageId: String? = null,
+    val tempMediaIds: List<String>? = null
 )
 
 /** Edit a scheduled post or draft: the same fields as create, all optional
@@ -44,7 +45,18 @@ data class UpdatePostRequest(
     val hashtags: String? = null,
     val scheduledAt: String? = null,
     val status: String? = null,
-    val pageId: String? = null
+    val pageId: String? = null,
+    val tempMediaIds: List<String>? = null
+)
+
+// A file staged by the background upload (POST /api/media/temp). The id
+// is what the post links to on save; the file itself is already on the
+// server, so saving never waits on an upload.
+data class TempMediaDto(
+    val id: String,
+    val filename: String,
+    val mimetype: String?,
+    val url: String?
 )
 
 data class PageDto(
@@ -105,6 +117,19 @@ interface PlannerApi {
         @Path("id") id: String,
         @Part file: MultipartBody.Part
     ): PostDto
+
+    // Background upload: stage a picked file on the server before the post
+    // exists, so saving never waits on an upload. The returned id is what
+    // the post links to (tempMediaIds) on save.
+    @Multipart
+    @POST("api/media/temp")
+    suspend fun uploadTempMedia(
+        @Part file: MultipartBody.Part
+    ): TempMediaDto
+
+    // Remove a staged file the user took off before saving.
+    @DELETE("api/media/temp/{id}")
+    suspend fun deleteTempMedia(@Path("id") id: String)
 
     @POST("api/posts/{id}/publish-now")
     suspend fun publishNow(@Path("id") id: String): PostDto

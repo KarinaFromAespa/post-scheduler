@@ -1,6 +1,5 @@
 package com.postscheduler.ui.create
 
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -46,7 +45,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,10 +68,11 @@ import java.util.Locale
 
 /**
  * Composer: feed post / reel (single MP4) / story (photo in v1).
- * Post and reel take a caption and hashtags; a story has neither — it is
- * just the photo. Crop is done by the system photo picker / editor
- * before the URI reaches here — v1 does not ship its own cropper.
- * Schedule = a time today (hourly slots); Publish Now bypasses the queue.
+ * Post and reel take a caption (hashtags go in the caption); a story
+ * has neither — it is just the photo. Crop is done by the system photo
+ * picker / editor before the URI reaches here — v1 does not ship its own
+ * cropper. Schedule = a time today (hourly slots); Publish Now bypasses
+ * the queue.
  * Saving with no time = Draft.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -92,15 +91,15 @@ fun CreateScreen(
     val pagePictureUrl by vm.pagePictureUrl.collectAsState()
     val pages by vm.pages.collectAsState()
     val selectedPageId by vm.selectedPageId.collectAsState()
+    val pickedMedia by vm.media.collectAsState()
+    val hasPendingUploads by vm.hasPendingUploads.collectAsState()
     var pageMenuExpanded by remember { mutableStateOf(false) }
 
     var caption by remember { mutableStateOf(editPost?.caption ?: "") }
-    var hashtags by remember { mutableStateOf(editPost?.hashtags ?: "") }
     var schedule by remember { mutableStateOf<Long?>(editPost?.scheduledAtMillis ?: vm.defaultScheduleMillis()) }
     // When true the composer saves as a draft (keeping any picked time as
     // the draft's planned time) instead of scheduling it.
     var saveAsDraft by remember { mutableStateOf(false) }
-    val media = remember { mutableStateListOf<Uri>() }
     var scheduleError by remember { mutableStateOf<String?>(null) }
 
     // Editing a scheduled post: pre-fill the form and tell the ViewModel
@@ -109,7 +108,6 @@ fun CreateScreen(
         if (editPost != null) {
             vm.loadForEdit(editPost)
             caption = editPost.caption
-            hashtags = editPost.hashtags
             // A past planned/scheduled time must be changed before it can
             // be scheduled again — prompt for a new time.
             val t = editPost.scheduledAtMillis
@@ -143,9 +141,7 @@ fun CreateScreen(
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetMultipleContents()
     ) { uris ->
-        // Skip photos already picked — the system picker lets the user
-        // choose the same photo again, and adding it twice would post it twice.
-        media.addAll(uris.filter { it !in media }.distinct())
+        vm.addMedia(uris)
     }
 
     // Stories and reels take exactly one file, so they get a single-pick
@@ -155,10 +151,7 @@ fun CreateScreen(
     val singlePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
-        if (uri != null && uri !in media) {
-            media.clear()
-            media.add(uri)
-        }
+        if (uri != null) vm.replaceMedia(uri)
     }
 
     if (done) {
@@ -166,8 +159,8 @@ fun CreateScreen(
         vm.resetDone()
     }
 
-    // Stories carry no caption/hashtags even if text was typed before
-    // switching type, so nothing stale is saved with a story.
+    // Stories carry no caption even if text was typed before switching
+    // type, so nothing stale is saved with a story.
     fun storySafe(text: String) = if (type == PostType.STORY) "" else text
 
     Column(
@@ -278,21 +271,14 @@ fun CreateScreen(
         }
         Spacer(Modifier.height(16.dp))
 
-        // Stories have no caption and no hashtags — only posts and reels do.
+        // Stories have no caption — only posts and reels do. Hashtags go
+        // in the caption.
         if (type != PostType.STORY) {
             OutlinedTextField(
                 value = caption, onValueChange = { caption = it },
                 label = { Text("Caption") },
                 placeholder = { Text("Write a caption…") },
                 modifier = Modifier.fillMaxWidth().height(140.dp),
-                shape = RoundedCornerShape(12.dp)
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = hashtags, onValueChange = { hashtags = it },
-                label = { Text("Hashtags") },
-                placeholder = { Text("#travel #food") },
-                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
             )
             Spacer(Modifier.height(20.dp))
@@ -313,26 +299,40 @@ fun CreateScreen(
                 else "Pick photos"
             )
         }
-        if (media.isNotEmpty()) {
+        if (pickedMedia.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             MediaRow(
-                uris = media.map { it.toString() },
+                items = pickedMedia.map {
+                    com.postscheduler.ui.components.ComposerMedia(
+                        uri = it.uri.toString(),
+                        uploading = it.state == CreateViewModel.UploadState.UPLOADING,
+                        failed = it.state == CreateViewModel.UploadState.FAILED
+                    )
+                },
                 isVideo = type == PostType.REEL,
-                onRemove = { uri -> media.remove(Uri.parse(uri)) },
+                onRemove = { uri ->
+                    pickedMedia.firstOrNull { it.uri.toString() == uri }?.let { vm.removeMedia(it) }
+                },
+                onRetry = { uri ->
+                    pickedMedia.firstOrNull { it.uri.toString() == uri }?.let { vm.retryUpload(it) }
+                },
                 dimAfter = if (type == PostType.STORY) 1 else Int.MAX_VALUE
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                if (type == PostType.STORY && media.size > 1)
+                if (type == PostType.STORY && pickedMedia.size > 1)
                     "A story uses one photo only — the first photo is kept. Remove the extra photos to continue."
-                else "${media.size} new selected — these replace the current photos on save.",
+                else if (hasPendingUploads) "Uploading photos…"
+                else "${pickedMedia.size} new selected — these replace the current photos on save.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else if (editPost != null && editPost.mediaList.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             MediaRow(
-                uris = editPost.mediaList,
+                items = editPost.mediaList.map {
+                    com.postscheduler.ui.components.ComposerMedia(uri = it)
+                },
                 isVideo = type == PostType.REEL,
                 dimAfter = if (type == PostType.STORY) 1 else Int.MAX_VALUE
             )
@@ -401,13 +401,13 @@ fun CreateScreen(
         Spacer(Modifier.height(20.dp))
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(
-            onClick = { vm.save(storySafe(caption), storySafe(hashtags), media.toList(), schedule, publishNow = false, saveAsDraft = saveAsDraft) },
-            enabled = !saving, modifier = Modifier.fillMaxWidth()
+            onClick = { vm.save(storySafe(caption), schedule, publishNow = false, saveAsDraft = saveAsDraft) },
+            enabled = !saving && !hasPendingUploads, modifier = Modifier.fillMaxWidth()
         ) { Text(if (editPost != null) "Save changes" else if (saveAsDraft || schedule == null) "Save draft" else "Add to Queue") }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
-            onClick = { vm.save(storySafe(caption), storySafe(hashtags), media.toList(), null, publishNow = true) },
-            enabled = !saving, modifier = Modifier.fillMaxWidth()
+            onClick = { vm.save(storySafe(caption), null, publishNow = true) },
+            enabled = !saving && !hasPendingUploads, modifier = Modifier.fillMaxWidth()
         ) { Text("Publish now") }
         Spacer(Modifier.height(8.dp))
         if (pageName == null) {

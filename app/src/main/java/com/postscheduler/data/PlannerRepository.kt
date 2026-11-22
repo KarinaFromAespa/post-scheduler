@@ -107,11 +107,33 @@ class PlannerRepository(context: Context) {
         }
     }
 
+    // Stage a picked file on the server in the background (before the post
+    // exists). Returns the temp id the post links to on save. The caller
+    // tracks it; removing the photo calls deleteTempMedia so no orphan
+    // is left on the server.
+    suspend fun uploadTempMedia(uri: Uri): com.postscheduler.data.remote.TempMediaDto {
+        val file = File(appContext.cacheDir, "upload-${UUID.randomUUID()}")
+        appContext.contentResolver.openInputStream(uri)?.use { input ->
+            file.outputStream().use { input.copyTo(it) }
+        }
+        return try {
+            val body = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+            val part = MultipartBody.Part.createFormData("file", file.name, body)
+            api().uploadTempMedia(part)
+        } finally {
+            file.delete()
+        }
+    }
+
+    suspend fun deleteTempMedia(tempId: String) {
+        runCatching { api().deleteTempMedia(tempId) }
+    }
+
     suspend fun createPost(
         type: PostType,
         caption: String,
-        hashtags: String,
         mediaUris: List<Uri>,
+        tempMediaIds: List<String>,
         scheduledAtMillis: Long?,
         publishNow: Boolean,
         saveAsDraft: Boolean = false
@@ -120,7 +142,7 @@ class PlannerRepository(context: Context) {
             id = UUID.randomUUID().toString(),
             type = type,
             caption = caption.trim(),
-            hashtags = hashtags.trim(),
+            hashtags = "",
             mediaUris = mediaUris.joinToString(",") { it.toString() },
             mediaKind = if (type == PostType.REEL) "video" else if (mediaUris.isNotEmpty()) "photo" else "",
             // A draft keeps its planned time (if one was picked) — it just
@@ -142,10 +164,11 @@ class PlannerRepository(context: Context) {
             val dto = api().createPost(
                 CreatePostRequest(
                     type = type.toApi(), caption = post.caption,
-                    hashtags = post.hashtags.ifBlank { null },
+                    hashtags = null,
                     scheduledAt = scheduledAtMillis?.let { iso(it) },
                     status = post.status.toApi(), publishNow = publishNow,
-                    pageId = currentPageId()
+                    pageId = currentPageId(),
+                    tempMediaIds = tempMediaIds.ifEmpty { null }
                 )
             )
             // Re-key the local row by the backend id (dropping the random
@@ -153,10 +176,6 @@ class PlannerRepository(context: Context) {
             // instead of adding a second copy of the post.
             dao.delete(post.id)
             dao.upsert(post.copy(id = dto.id, backendId = dto.id))
-            // Upload media files one by one; backend stores them in Object Storage.
-            mediaUris.forEach { uri ->
-                runCatching { uploadMedia(dto.id, uri) }
-            }
             if (publishNow) {
                 runCatching { api().publishNow(dto.id) }
             }
@@ -168,24 +187,23 @@ class PlannerRepository(context: Context) {
     }
 
     /**
-     * Edit a scheduled post or draft: change its time/date, caption,
-     * hashtags or photos. PATCHes the same backend post (so its place in
-     * the queue and its id are kept) and updates the local copy. New photos
-     * replace the old ones; no new photos means the old ones stay.
+     * Edit a scheduled post or draft: change its time/date, caption or
+     * photos. PATCHes the same backend post (so its place in the queue
+     * and its id are kept) and updates the local copy. New photos replace
+     * the old ones; no new photos means the old ones stay.
      */
     suspend fun updatePost(
         post: Post,
         type: PostType,
         caption: String,
-        hashtags: String,
         mediaUris: List<Uri>,
+        tempMediaIds: List<String>,
         scheduledAtMillis: Long?,
         saveAsDraft: Boolean = false
     ): Post {
         val updated = post.copy(
             type = type,
             caption = caption.trim(),
-            hashtags = hashtags.trim(),
             mediaUris = if (mediaUris.isNotEmpty()) mediaUris.joinToString(",") { it.toString() } else post.mediaUris,
             mediaKind = if (type == PostType.REEL) "video" else if (mediaUris.isNotEmpty()) "photo" else post.mediaKind,
             scheduledAtMillis = scheduledAtMillis,
@@ -200,17 +218,11 @@ class PlannerRepository(context: Context) {
                 backendId,
                 com.postscheduler.data.remote.UpdatePostRequest(
                     type = type.toApi(), caption = updated.caption,
-                    hashtags = updated.hashtags.ifBlank { null },
                     scheduledAt = scheduledAtMillis?.let { iso(it) },
-                    status = updated.status.toApi(), pageId = currentPageId()
+                    status = updated.status.toApi(), pageId = currentPageId(),
+                    tempMediaIds = tempMediaIds.ifEmpty { null }
                 )
             )
-            if (mediaUris.isNotEmpty()) {
-                runCatching { api().clearMedia(backendId) }
-                mediaUris.forEach { uri ->
-                    runCatching { uploadMedia(backendId, uri) }
-                }
-            }
         }.onFailure { e ->
             dao.upsert(updated.copy(status = PostStatus.FAILED, failureReason = e.message))
             throw e
@@ -219,8 +231,8 @@ class PlannerRepository(context: Context) {
     }
 
     /** Change only the scheduled time of a scheduled post (the Publish
-     * tab's "Update schedule" action). Type, caption, hashtags and photos
-     * are left alone. The backend rejects a time less than 2 minutes ahead,
+     * tab's "Update schedule" action). Type, caption and photos are left
+     * alone. The backend rejects a time less than 2 minutes ahead,
      * so the caller must validate the time first. */
     suspend fun updateSchedule(post: Post, scheduledAtMillis: Long): Post {
         val updated = post.copy(
@@ -244,17 +256,6 @@ class PlannerRepository(context: Context) {
             throw e
         }
         return updated
-    }
-
-    private suspend fun uploadMedia(backendId: String, uri: Uri) {
-        val file = File(appContext.cacheDir, "upload-${UUID.randomUUID()}")
-        appContext.contentResolver.openInputStream(uri)?.use { input ->
-            file.outputStream().use { input.copyTo(it) }
-        }
-        val body = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
-        val part = MultipartBody.Part.createFormData("file", file.name, body)
-        api().uploadMedia(backendId, part)
-        file.delete()
     }
 
     suspend fun publishNow(post: Post) {

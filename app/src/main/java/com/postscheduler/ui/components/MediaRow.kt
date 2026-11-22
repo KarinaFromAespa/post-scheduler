@@ -16,6 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -28,40 +30,38 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 
-/**
- * Horizontally scrolling row of square photo thumbnails for the composer:
- * each photo gets its own clearly bounded tile, so tall screenshots no
- * longer land at odd positions the way the collage laid them out. An
- * optional remove button sits on each tile. The remove button is a plain
- * clickable circle, not an IconButton — IconButton enforces a 48dp minimum
- * touch target that overflowed the tile and made the X look oversized.
- *
- * `dimAfter` dims every tile from that index on: a story uses one photo
- * only, so when the type is Story the extras are greyed out to show they
- * won't be used, while their remove buttons stay so the user can drop them.
- */
+// One tile in the composer media row. `uploading` shows a circular
+// progress overlay while the file goes up in the background; `failed`
+// shows a retry button instead.
+data class ComposerMedia(
+    val uri: String,
+    val uploading: Boolean = false,
+    val failed: Boolean = false
+)
+
 @Composable
 fun MediaRow(
-    uris: List<String>,
+    items: List<ComposerMedia>,
     isVideo: Boolean = false,
     onRemove: ((String) -> Unit)? = null,
+    onRetry: ((String) -> Unit)? = null,
     dimAfter: Int = Int.MAX_VALUE,
     modifier: Modifier = Modifier
 ) {
-    if (uris.isEmpty()) return
+    if (items.isEmpty()) return
     val shape = RoundedCornerShape(12.dp)
     LazyRow(
         modifier = modifier.fillMaxWidth().height(120.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        itemsIndexed(uris) { index, uri ->
+        itemsIndexed(items) { index, item ->
             Box(
                 Modifier.size(120.dp).clip(shape)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .alpha(if (index >= dimAfter) 0.35f else 1f)
             ) {
                 AsyncImage(
-                    model = uri, contentDescription = null,
+                    model = item.uri, contentDescription = null,
                     contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
                 if (isVideo) {
@@ -76,6 +76,35 @@ fun MediaRow(
                         )
                     }
                 }
+                if (item.uploading) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color.White, modifier = Modifier.size(36.dp)
+                        )
+                    }
+                } else if (item.failed) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            Modifier.size(44.dp)
+                                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                                .clickable { onRetry?.invoke(item.uri) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Refresh, contentDescription = "Retry upload",
+                                tint = Color.White, modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                }
                 if (onRemove != null) {
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(6.dp).size(28.dp)
@@ -83,7 +112,7 @@ fun MediaRow(
                                 MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                                 CircleShape
                             )
-                            .clickable { onRemove(uri) },
+                            .clickable { onRemove(item.uri) },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
