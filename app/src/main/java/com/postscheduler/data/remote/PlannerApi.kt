@@ -17,7 +17,8 @@ import retrofit2.http.Query
 data class MediaDto(
     val url: String?,
     val mimetype: String?,
-    val filename: String?
+    val filename: String?,
+    val posterUrl: String? = null
 )
 
 data class PostDto(

@@ -30,14 +30,14 @@ class PublishViewModel(app: Application) : AndroidViewModel(app) {
      * shown, so posts scheduled on the website (or after this ViewModel was
      * first created) appear — init only runs once, and the ViewModel is
      * kept across tab switches, so init alone never re-syncs. */
-    fun refresh() = viewModelScope.launch {
+    fun refresh(showIndicator: Boolean = true) = viewModelScope.launch {
         if (_refreshing.value) return@launch
-        _refreshing.value = true
+        if (showIndicator) _refreshing.value = true
         try {
             runCatching { _paused.value = repo.queuePaused() }
             runCatching { repo.refreshQueue() }.onFailure { _error.value = it.message }
         } finally {
-            _refreshing.value = false
+            if (showIndicator) _refreshing.value = false
         }
     }
 

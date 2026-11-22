@@ -129,7 +129,9 @@ fun PublishScreen(
 
     // Pull the latest queue every time this tab is shown, so posts scheduled
     // elsewhere (website, or after this screen was first opened) appear.
-    LaunchedEffect(Unit) { vm.refresh() }
+    // Silent — no pull indicator. Showing the spinner on every tab switch
+    // felt like the tab was force-refreshing.
+    LaunchedEffect(Unit) { vm.refresh(showIndicator = false) }
 
     Column(Modifier.fillMaxSize()) {
         Row(

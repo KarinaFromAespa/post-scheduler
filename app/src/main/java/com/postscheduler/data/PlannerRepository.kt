@@ -341,8 +341,11 @@ private fun com.postscheduler.data.remote.PostDto.toLocal(): Post {
     val millis = scheduledAt?.let { parseIso(it) }
     // The backend returns each file's absolute URL. Without these the
     // local row has no media at all, so the Publish cards show no photo
-    // and editing a story shows no image to keep or replace.
-    val mediaUrls = (media ?: emptyList()).mapNotNull { it.url }.filter { it.isNotBlank() }
+    // and editing a story shows no image to keep or replace. For a video
+    // the backend also returns a posterUrl — a JPEG frame pulled from the
+    // video — and that is what the card shows, because decoding a frame
+    // from a remote video URL on the phone is unreliable.
+    val mediaUrls = (media ?: emptyList()).mapNotNull { it.posterUrl ?: it.url }.filter { it.isNotBlank() }
     val isVideo = (media ?: emptyList()).any { it.mimetype?.startsWith("video/") == true }
     return Post(
         id = id, type = type, caption = caption, hashtags = hashtags ?: "",
