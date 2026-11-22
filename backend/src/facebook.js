@@ -126,8 +126,10 @@ async function publishStory(post, mediaFiles, page) {
 
 // Video stories need a three-phase upload: open a session, upload the
 // file to the upload URL Facebook returns, then publish once it has
-// finished processing. The video is already hosted publicly, so Facebook
-// fetches it from our URL — the file itself is never sent.
+// finished processing. The video bytes are uploaded directly (resumable
+// protocol, Offset header) — the file_url shortcut left the video
+// unprocessed on Facebook's side: the upload reported success but
+// processing_phase stayed "not_started" forever, so the story timed out.
 async function publishVideoStory(file, page) {
   const start = await graph(`/${page.id}/video_stories`, {
     params: { upload_phase: 'start' }, method: 'POST', token: page.token,
@@ -135,27 +137,37 @@ async function publishVideoStory(file, page) {
   const videoId = start.video_id;
   const uploadUrl = start.upload_url;
   if (!videoId || !uploadUrl) throw new Error('Facebook did not start a video story upload session');
-  // The upload has no timeout by default, so a hung connection would
-  // stick this story in "publishing" forever. 60s covers the fetch of
-  // even a large file_url video.
+  // Read the video bytes from our own public URL, then send them to
+  // Facebook. A hung read or upload must not stick the story in
+  // "publishing" forever, so both have timeouts.
+  const fileRes = await fetch(file.url, { signal: AbortSignal.timeout(60 * 1000) });
+  if (!fileRes.ok) throw new Error(`Could not read the story video (${fileRes.status})`);
+  const bytes = Buffer.from(await fileRes.arrayBuffer());
   const uploadCtrl = new AbortController();
-  const uploadTimer = setTimeout(() => uploadCtrl.abort(), 60 * 1000);
+  const uploadTimer = setTimeout(() => uploadCtrl.abort(), 120 * 1000);
   let uploadRes;
   try {
     uploadRes = await fetch(uploadUrl, {
       method: 'POST',
-      headers: { Authorization: `OAuth ${page.token}`, file_url: file.url },
+      headers: {
+        Authorization: `OAuth ${page.token}`,
+        Offset: '0',
+        'Content-Length': String(bytes.length),
+        'Content-Type': file.mimetype || 'video/mp4',
+      },
+      body: bytes,
       signal: uploadCtrl.signal,
+      duplex: 'half',
     });
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('Video story upload timed out (60s)');
+    if (e.name === 'AbortError') throw new Error('Video story upload timed out (120s)');
     throw e;
   } finally {
     clearTimeout(uploadTimer);
   }
   const uploadBody = await uploadRes.json().catch(() => ({}));
   if (!uploadRes.ok) {
-    throw new Error(uploadBody?.error?.message || `Video story upload failed (${uploadRes.status})`);
+    throw new Error(uploadBody?.error?.message || uploadBody?.debug_info?.message || `Video story upload failed (${uploadRes.status})`);
   }
   // Wait for Facebook to finish processing the video — publishing before
   // that fails. Poll the video status, giving up after 90 seconds.
