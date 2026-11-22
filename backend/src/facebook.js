@@ -94,14 +94,58 @@ async function publishPost(post, mediaFiles) {
 }
 
 async function publishStory(post, mediaFiles, page) {
-  if (mediaFiles.length === 0 || !mediaFiles[0].mimetype.startsWith('image/')) {
-    return { ok: false, reason: 'Story needs one photo in v1' };
+  if (mediaFiles.length === 0) {
+    return { ok: false, reason: 'Story needs one photo or video' };
+  }
+  if (mediaFiles[0].mimetype.startsWith('video/')) {
+    return publishVideoStory(mediaFiles[0], page);
+  }
+  if (!mediaFiles[0].mimetype.startsWith('image/')) {
+    return { ok: false, reason: 'Story needs one photo or video' };
   }
   const body = await graph(`/${page.id}/stories`, {
     params: { photo_url: mediaFiles[0].url },
     method: 'POST', token: page.token,
   });
   return { ok: true, facebookPostId: body.id };
+}
+
+// Video stories need a three-phase upload: open a session, upload the
+// file to the upload URL Facebook returns, then publish once it has
+// finished processing. The video is already hosted publicly, so Facebook
+// fetches it from our URL — the file itself is never sent.
+async function publishVideoStory(file, page) {
+  const start = await graph(`/${page.id}/video_stories`, {
+    params: { upload_phase: 'start' }, method: 'POST', token: page.token,
+  });
+  const videoId = start.video_id;
+  const uploadUrl = start.upload_url;
+  if (!videoId || !uploadUrl) throw new Error('Facebook did not start a video story upload session');
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: { Authorization: `OAuth ${page.token}`, file_url: file.url },
+  });
+  const uploadBody = await uploadRes.json().catch(() => ({}));
+  if (!uploadRes.ok) {
+    throw new Error(uploadBody?.error?.message || `Video story upload failed (${uploadRes.status})`);
+  }
+  // Wait for Facebook to finish processing the video — publishing before
+  // that fails. Poll the video status, giving up after 90 seconds.
+  const deadline = Date.now() + 90 * 1000;
+  for (;;) {
+    const status = await graph(`/${videoId}`, {
+      params: { fields: 'status' }, token: page.token,
+    });
+    const phase = status?.status?.processing_phase?.status;
+    if (phase === 'complete') break;
+    if (phase === 'error') throw new Error('Facebook failed to process the story video');
+    if (Date.now() > deadline) throw new Error('Timed out waiting for Facebook to process the story video');
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  const finish = await graph(`/${page.id}/video_stories`, {
+    params: { upload_phase: 'finish', video_id: videoId }, method: 'POST', token: page.token,
+  });
+  return { ok: true, facebookPostId: finish.post_id };
 }
 
 // Exchange a short-lived Page token for a long-lived one (60 days). Needs
