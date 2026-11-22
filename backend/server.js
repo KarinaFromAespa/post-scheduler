@@ -159,9 +159,11 @@ app.post('/api/media/temp', media.upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'file is required' });
   const entry = await media.addTempMedia(req.file);
   store.addTempMedia(entry);
+  const pUrl = media.posterUrl(entry);
   res.status(201).json({
     id: entry.id, filename: entry.filename, mimetype: entry.mimetype,
     url: media.tempMediaUrl(entry),
+    ...(pUrl ? { posterUrl: pUrl } : {}),
   });
 });
 

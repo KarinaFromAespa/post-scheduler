@@ -6,11 +6,81 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 const multer = require('multer');
 const mediaStore = require('./db/mediaStore');
 
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// A video's thumbnail is a still frame pulled out of the file with
+// ffmpeg, because the app cannot reliably decode a frame from a remote
+// video URL (Coil's VideoFrameDecoder + MediaMetadataRetriever is flaky
+// over HTTPS). The poster is a small JPEG next to the video, uploaded
+// to both buckets like the video itself, and the DTO carries its URL so
+// clients just load a normal image. The website's <video> element shows
+// its own first frame, so it never needed this — the poster is for the app.
+function makePoster(videoPath) {
+  const posterPath = `${videoPath}-poster.jpg`;
+  return new Promise((resolve) => {
+    execFile('ffmpeg', ['-y', '-i', videoPath, '-ss', '0.5', '-frames:v', '1', '-q:v', '4', posterPath], (err) => {
+      if (err) {
+        console.error('[media] poster failed:', videoPath, err.message);
+        resolve(null);
+      } else {
+        resolve(posterPath);
+      }
+    });
+  });
+}
+
+// If a media entry is a video, generate its poster and store the poster
+// alongside it (local file + both buckets). Called after the video is
+// saved, for both post media and staged temp media.
+async function attachPoster(entry, objectNamePrefix) {
+  const mime = entry.path ? detectMime(entry.path) : null;
+  const type = (mime && mime !== 'application/octet-stream') ? mime : entry.mimetype;
+  if (!type || !type.startsWith('video/')) return;
+  const posterPath = await makePoster(entry.path);
+  if (!posterPath) return;
+  entry.posterPath = posterPath;
+  const posterObjectName = `${objectNamePrefix}-poster`;
+  entry.posterObjectName = posterObjectName;
+  try {
+    await mediaStore.uploadToOracle(posterObjectName, posterPath, 'image/jpeg');
+  } catch (e) {
+    console.error('[media] Oracle poster upload failed:', e.message);
+  }
+  if (mediaStore.neonConfigured()) {
+    try {
+      await mediaStore.uploadToNeon(posterObjectName, posterPath, 'image/jpeg');
+    } catch (e) {
+      console.error('[media] Neon poster upload failed:', e.message);
+    }
+  }
+}
+
+function posterUrl(entry) {
+  if (!entry.posterPath) return null;
+  const base = publicBaseUrl();
+  return `${base}/uploads/${path.basename(entry.posterPath)}`;
+}
+
+function deletePoster(entry) {
+  if (entry.posterPath) {
+    try { fs.unlinkSync(entry.posterPath); } catch { /* already gone */ }
+  }
+  if (entry.posterObjectName) {
+    mediaStore.deleteFromOracle(entry.posterObjectName).catch((e) => {
+      console.error('[media] Oracle poster delete failed:', e.message);
+    });
+    if (mediaStore.neonConfigured()) {
+      mediaStore.deleteFromNeon(entry.posterObjectName).catch((e) => {
+        console.error('[media] Neon poster delete failed:', e.message);
+      });
+    }
+  }
+}
 
 const upload = multer({
   dest: UPLOAD_DIR,
@@ -49,7 +119,7 @@ function mediaFor(post) {
     const mimetype = (f.mimetype && f.mimetype !== 'application/octet-stream')
       ? f.mimetype
       : (f.path ? detectMime(f.path) : null) || f.mimetype;
-    return {
+    const out = {
       ...f,
       mimetype,
       // Facebook must be able to fetch the file, so the URL is absolute once
@@ -57,6 +127,9 @@ function mediaFor(post) {
       // relative path still works through the website's /uploads proxy.
       url: f.url || `${base}/uploads/${path.basename(f.path)}`,
     };
+    const pUrl = posterUrl(f);
+    if (pUrl) out.posterUrl = pUrl;
+    return out;
   });
 }
 
@@ -90,12 +163,14 @@ async function addTempMedia(file) {
       console.error('[media] Neon S3 upload failed:', e.message);
     }
   }
+  await attachPoster(entry, objectName);
   return entry;
 }
 
 // Delete one staged file from local disk + both buckets.
 function deleteTempMedia(entry) {
   try { fs.unlinkSync(entry.path); } catch { /* already gone */ }
+  deletePoster(entry);
   if (entry.objectName) {
     mediaStore.deleteFromOracle(entry.objectName).catch((e) => {
       console.error('[media] Oracle bucket delete failed:', e.message);
@@ -137,12 +212,14 @@ async function addMedia(post, file) {
       console.error('[media] Neon S3 upload failed:', e.message);
     }
   }
+  await attachPoster(entry, objectName);
   return entry;
 }
 
 function deleteMedia(post) {
   for (const f of post.mediaFiles || []) {
     try { fs.unlinkSync(f.path); } catch { /* already gone */ }
+    deletePoster(f);
     if (f.objectName) {
       mediaStore.deleteFromOracle(f.objectName).catch((e) => {
         console.error('[media] Oracle bucket delete failed:', e.message);
@@ -172,7 +249,20 @@ async function ensureLocalFiles(post) {
         console.error('[media] restore from Oracle bucket failed:', f.objectName, e.message);
       }
     }
+    if (f.posterObjectName && f.posterPath) {
+      try {
+        fs.accessSync(f.posterPath, fs.constants.F_OK);
+      } catch {
+        try {
+          fs.mkdirSync(path.dirname(f.posterPath), { recursive: true });
+          await mediaStore.downloadFromOracle(f.posterObjectName, f.posterPath);
+          console.log('[media] restored local poster from Oracle bucket:', f.posterObjectName);
+        } catch (e) {
+          console.error('[media] poster restore failed:', f.posterObjectName, e.message);
+        }
+      }
+    }
   }
 }
 
-module.exports = { upload, mediaFor, addMedia, deleteMedia, ensureLocalFiles, addTempMedia, deleteTempMedia, tempMediaUrl, detectMime };
+module.exports = { upload, mediaFor, addMedia, deleteMedia, ensureLocalFiles, addTempMedia, deleteTempMedia, tempMediaUrl, detectMime, attachPoster, posterUrl };
