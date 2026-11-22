@@ -73,7 +73,7 @@ app.get('/api/drafts', (req, res) => res.json(
 ));
 
 app.post('/api/posts', (req, res) => {
-  const { type, caption, hashtags, scheduledAt, status, publishNow, pageId } = req.body || {};
+  const { type, caption, hashtags, scheduledAt, status, publishNow, pageId, tempMediaIds } = req.body || {};
   if (!TYPES.has(type)) return res.status(400).json({ error: 'type must be post, reel or story' });
   // Caption may be empty (stories have none; a reel or post can be media-only).
   // The clients still require text OR media before they send anything.
@@ -87,7 +87,9 @@ app.post('/api/posts', (req, res) => {
     id: crypto.randomUUID(), type, caption: caption.trim(),
     hashtags: hashtags || null, scheduledAt: scheduledAt || null,
     status: publishNow ? 'publishing' : (STATUSES.has(status) ? status : (scheduledAt ? 'scheduled' : 'draft')),
-    failureReason: null, facebookPostId: null, mediaFiles: [],
+    failureReason: null, facebookPostId: null,
+    // Files already uploaded in the background are claimed into the post.
+    mediaFiles: store.claimTempMedia(tempMediaIds),
     pageId: pageId || null,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
@@ -139,6 +141,30 @@ app.delete('/api/posts/:id/media', (req, res) => {
   res.json(toDto(post));
 });
 
+// ---- Temp media staging (background upload) ----
+// A picked photo is uploaded before the post exists, so saving never
+// waits on an upload. It waits here until the post is saved (POST/PATCH
+// with tempMediaIds claims it), the user removes it, or it expires.
+app.post('/api/media/temp', media.upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'file is required' });
+  const entry = await media.addTempMedia(req.file);
+  store.addTempMedia(entry);
+  res.status(201).json({
+    id: entry.id, filename: entry.filename, mimetype: entry.mimetype,
+    url: media.tempMediaUrl(entry),
+  });
+});
+
+// Remove a staged file the user took off before saving. A missing id is
+// not an error — the client may retry.
+app.delete('/api/media/temp/:id', (req, res) => {
+  const entry = store.getTempMedia(req.params.id);
+  if (!entry) return res.json({ ok: true });
+  media.deleteTempMedia(entry);
+  store.removeTempMedia(req.params.id);
+  res.json({ ok: true });
+});
+
 // Edit a scheduled post or draft: caption, hashtags, time/date, type and
 // Page. A post that already went out (published/publishing) cannot be edited.
 app.patch('/api/posts/:id', (req, res) => {
@@ -147,7 +173,7 @@ app.patch('/api/posts/:id', (req, res) => {
   if (post.status === 'published' || post.status === 'publishing') {
     return res.status(400).json({ error: 'a published post cannot be edited' });
   }
-  const { type, caption, hashtags, scheduledAt, status, pageId } = req.body || {};
+  const { type, caption, hashtags, scheduledAt, status, pageId, tempMediaIds } = req.body || {};
   if (type !== undefined && !TYPES.has(type)) {
     return res.status(400).json({ error: 'type must be post, reel or story' });
   }
@@ -180,6 +206,12 @@ app.patch('/api/posts/:id', (req, res) => {
   if (pageId !== undefined) post.pageId = pageId || null;
   if (status !== undefined) post.status = status;
   if (post.status === 'scheduled' && !post.scheduledAt) post.status = 'draft';
+  // Files uploaded in the background while editing replace the old ones:
+  // delete the old files, then claim the staged ones into the post.
+  if (Array.isArray(tempMediaIds) && tempMediaIds.length > 0) {
+    media.deleteMedia(post);
+    post.mediaFiles = store.claimTempMedia(tempMediaIds);
+  }
   post.failureReason = null;
   post.failureReason = null;
   post.updatedAt = new Date().toISOString();
@@ -255,6 +287,43 @@ app.get('/api/insights', async (req, res) => {
   res.json(await facebook.insights(req.query.pageId || null));
 });
 
+// Temp-media orphan sweep. A staged file the user never saved (picked a
+// photo, then closed the tab) would otherwise sit on disk + both buckets
+// forever. Anything staged longer than the window is reclaimed, and any
+// file in the uploads dir that no post or staged entry references is
+// reclaimed too — but only once it is older than the window, so a file
+// that is mid-upload (seconds old) is never touched.
+const TEMP_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+function sweepTempMedia() {
+  const cutoff = Date.now() - TEMP_TTL_MS;
+  let reclaimed = 0;
+  for (const t of store.allTempMedia()) {
+    if (Date.parse(t.createdAt || 0) < cutoff) {
+      media.deleteTempMedia(t);
+      store.removeTempMedia(t.id);
+      reclaimed++;
+    }
+  }
+  // Unreferenced local files older than the window (store lost track).
+  const referenced = new Set();
+  for (const p of store.allPosts()) {
+    for (const f of p.mediaFiles || []) referenced.add(path.basename(f.path || ''));
+  }
+  for (const t of store.allTempMedia()) referenced.add(path.basename(t.path || ''));
+  try {
+    for (const name of require('fs').readdirSync(UPLOAD_DIR)) {
+      if (referenced.has(name)) continue;
+      const full = path.join(UPLOAD_DIR, name);
+      let stat;
+      try { stat = require('fs').statSync(full); } catch { continue; }
+      if (!stat.isFile() || stat.mtimeMs > cutoff) continue;
+      try { require('fs').unlinkSync(full); reclaimed++; } catch { /* already gone */ }
+    }
+  } catch { /* uploads dir missing */ }
+  if (reclaimed > 0) console.log(`[media] temp sweep reclaimed ${reclaimed} file(s)`);
+}
+
 async function start() {
   await store.init();
   // Restore any local media file that is missing (e.g. after a VM rebuild)
@@ -262,6 +331,9 @@ async function start() {
   for (const post of store.allPosts()) {
     await media.ensureLocalFiles(post);
   }
+  // Reclaim staged files abandoned before a save, on startup and hourly.
+  sweepTempMedia();
+  setInterval(sweepTempMedia, 60 * 60 * 1000);
   app.listen(PORT, () => {
     console.log(`facebook-post-planner-backend listening on :${PORT}`);
     console.log(`facebook configured: ${facebook.configured()}`);

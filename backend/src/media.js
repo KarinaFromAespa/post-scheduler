@@ -36,6 +36,57 @@ function objectNameFor(postId) {
   return `${postId}/${crypto.randomUUID()}`;
 }
 
+// Temp (staging) media: a picked file, uploaded before the post exists.
+// Same durable copies as a post's media (Oracle + Neon + local disk),
+// under a temp/ key so it is never confused with a post's file.
+function tempObjectName() {
+  return `temp/${crypto.randomUUID()}`;
+}
+
+async function addTempMedia(file) {
+  const objectName = tempObjectName();
+  const entry = {
+    id: crypto.randomUUID(),
+    path: file.path, filename: file.originalname, mimetype: file.mimetype,
+    objectName, createdAt: new Date().toISOString(),
+  };
+  try {
+    await mediaStore.uploadToOracle(objectName, file.path, file.mimetype);
+  } catch (e) {
+    console.error('[media] Oracle bucket upload failed:', e.message);
+  }
+  if (mediaStore.neonConfigured()) {
+    try {
+      await mediaStore.uploadToNeon(objectName, file.path, file.mimetype);
+    } catch (e) {
+      console.error('[media] Neon S3 upload failed:', e.message);
+    }
+  }
+  return entry;
+}
+
+// Delete one staged file from local disk + both buckets.
+function deleteTempMedia(entry) {
+  try { fs.unlinkSync(entry.path); } catch { /* already gone */ }
+  if (entry.objectName) {
+    mediaStore.deleteFromOracle(entry.objectName).catch((e) => {
+      console.error('[media] Oracle bucket delete failed:', e.message);
+    });
+    if (mediaStore.neonConfigured()) {
+      mediaStore.deleteFromNeon(entry.objectName).catch((e) => {
+        console.error('[media] Neon S3 delete failed:', e.message);
+      });
+    }
+  }
+}
+
+// Temp-media URL for the client preview (the staged file is served
+// from /uploads, same as a post's media).
+function tempMediaUrl(entry) {
+  const base = publicBaseUrl();
+  return `${base}/uploads/${path.basename(entry.path)}`;
+}
+
 // After multer saves a temp file, copy it to the Oracle bucket (primary)
 // and the Neon S3 bucket (DR), then return the mediaFiles entry. The local
 // file stays as the serving cache. Bucket uploads are best-effort: a
@@ -96,4 +147,4 @@ async function ensureLocalFiles(post) {
   }
 }
 
-module.exports = { upload, mediaFor, addMedia, deleteMedia, ensureLocalFiles };
+module.exports = { upload, mediaFor, addMedia, deleteMedia, ensureLocalFiles, addTempMedia, deleteTempMedia, tempMediaUrl };

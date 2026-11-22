@@ -14,7 +14,7 @@ const neonDb = require('./db/neon');
 const DATA_FILE = path.join(__dirname, '..', 'data', 'planner.json');
 
 function emptyState() {
-  return { posts: [], queuePaused: false, pages: [] };
+  return { posts: [], queuePaused: false, pages: [], tempMedia: [] };
 }
 
 function loadJson() {
@@ -23,6 +23,9 @@ function loadJson() {
     if (!Array.isArray(state.posts)) state.posts = [];
     if (typeof state.queuePaused !== 'boolean') state.queuePaused = false;
     if (!Array.isArray(state.pages)) state.pages = [];
+    // Temp media is staging for background uploads; JSON-only, never
+    // synced to Oracle/Neon — it is short-lived and the sweep reclaims it.
+    if (!Array.isArray(state.tempMedia)) state.tempMedia = [];
     return state;
   } catch {
     return emptyState();
@@ -107,7 +110,8 @@ async function init() {
       try { loaded = await neonDb.getAll(); } catch (e) { console.error('[store] Neon load failed:', e.message); }
     }
     if (loaded && (loaded.posts.length > 0 || loaded.pages.length > 0)) {
-      state = { posts: loaded.posts, queuePaused: loaded.queuePaused, pages: loaded.pages };
+      // Temp media is JSON-only, so keep the local staging as-is.
+      state = { posts: loaded.posts, queuePaused: loaded.queuePaused, pages: loaded.pages, tempMedia: state.tempMedia || [] };
       saveJson(state);
     }
   }
@@ -173,5 +177,34 @@ module.exports = {
       saveJson(state);
       queueDb(async () => { for (const p of changed) await dbUpsertPost(p); });
     }
+  },
+  // Temp media staging. A picked file is uploaded before the post exists;
+  // it waits here until the post is saved (claim) or the user removes it
+  // (delete) or it expires (sweep). JSON-only, never Oracle/Neon.
+  allTempMedia: () => state.tempMedia,
+  getTempMedia: (id) => state.tempMedia.find((t) => t.id === id),
+  addTempMedia: (entry) => {
+    state.tempMedia.push(entry);
+    saveJson(state);
+    return entry;
+  },
+  removeTempMedia: (id) => {
+    state.tempMedia = state.tempMedia.filter((t) => t.id !== id);
+    saveJson(state);
+  },
+  claimTempMedia: (ids) => {
+    const claimed = [];
+    const claimedIds = new Set();
+    for (const id of ids || []) {
+      const t = state.tempMedia.find((x) => x.id === id);
+      if (!t) continue;
+      claimed.push({ path: t.path, filename: t.filename, mimetype: t.mimetype, objectName: t.objectName });
+      claimedIds.add(t.id);
+    }
+    if (claimedIds.size > 0) {
+      state.tempMedia = state.tempMedia.filter((t) => !claimedIds.has(t.id));
+      saveJson(state);
+    }
+    return claimed;
   },
 };
