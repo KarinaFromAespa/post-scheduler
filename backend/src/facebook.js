@@ -153,6 +153,7 @@ async function publishVideoStory(file, page) {
         Authorization: `OAuth ${page.token}`,
         Offset: '0',
         'Content-Length': String(bytes.length),
+        'X-Entity-Length': String(bytes.length),
         'Content-Type': file.mimetype || 'video/mp4',
       },
       body: bytes,
