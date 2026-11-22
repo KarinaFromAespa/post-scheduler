@@ -39,7 +39,7 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private fun isVideoUri(uri: Uri): Boolean =
-        app.contentResolver.getType(uri)?.startsWith("video/") == true
+        getApplication<Application>().contentResolver.getType(uri)?.startsWith("video/") == true
 
     // Upload each picked file to temp staging in the background. A failed
     // upload stays on the tile with a retry instead of failing silently.

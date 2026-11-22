@@ -299,7 +299,9 @@ fun CreateScreen(
             when (type) {
                 PostType.REEL -> singlePicker.launch("video/*")
                 PostType.STORY -> storyPicker.launch(
-                    ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                    ActivityResultContracts.PickVisualMedia.PickVisualMediaRequest(
+                        ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                    )
                 )
                 else -> picker.launch("image/*")
             }
