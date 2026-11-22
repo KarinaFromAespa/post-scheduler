@@ -40,6 +40,7 @@ fun DraftsScreen(
     vm: DraftsViewModel = viewModel()
 ) {
     val drafts by vm.drafts.collectAsState(initial = emptyList())
+    val error by vm.error.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
         Text(
@@ -53,6 +54,14 @@ fun DraftsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
+        error?.let {
+            Text(
+                "Delete failed: $it",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),

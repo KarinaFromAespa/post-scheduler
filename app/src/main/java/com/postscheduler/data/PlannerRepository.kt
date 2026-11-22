@@ -270,7 +270,20 @@ class PlannerRepository(context: Context) {
         }
     }
 
-    suspend fun deletePost(id: String) = dao.delete(id)
+    // Delete from the backend first, then locally. The old version only
+    // deleted the local row, so the next backend refresh (every time the
+    // Publish tab is shown) put the post straight back — the delete
+    // looked like it did nothing. A 404 means the backend never had it
+    // (a local-only post), so deleting locally is still correct; any
+    // other failure leaves the local row so the post is not lost.
+    suspend fun deletePost(id: String) {
+        runCatching { api().deletePost(id) }.onFailure { e ->
+            if (e is retrofit2.HttpException && e.code() == 404) {
+                // Already gone from the backend — delete locally below.
+            } else throw e
+        }
+        dao.delete(id)
+    }
 
     suspend fun setQueuePaused(paused: Boolean): Boolean {
         return runCatching {
@@ -299,8 +312,14 @@ private fun com.postscheduler.data.remote.PostDto.toLocal(): Post {
     val type = runCatching { PostType.valueOf(type.uppercase()) }.getOrDefault(PostType.POST)
     val status = runCatching { PostStatus.valueOf(status.uppercase()) }.getOrDefault(PostStatus.SCHEDULED)
     val millis = scheduledAt?.let { parseIso(it) }
+    // The backend returns each file's absolute URL. Without these the
+    // local row has no media at all, so the Publish cards show no photo
+    // and editing a story shows no image to keep or replace.
+    val mediaUrls = (media ?: emptyList()).mapNotNull { it.url }.filter { it.isNotBlank() }
     return Post(
         id = id, type = type, caption = caption, hashtags = hashtags ?: "",
+        mediaUris = mediaUrls.joinToString(","),
+        mediaKind = if (type == PostType.REEL) "video" else if (mediaUrls.isNotEmpty()) "photo" else "",
         scheduledAtMillis = millis, status = status,
         failureReason = failureReason, backendId = id, publishedPostId = facebookPostId,
         pageId = pageId

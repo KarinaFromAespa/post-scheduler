@@ -14,6 +14,12 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
+data class MediaDto(
+    val url: String?,
+    val mimetype: String?,
+    val filename: String?
+)
+
 data class PostDto(
     val id: String,
     val type: String,
@@ -23,7 +29,8 @@ data class PostDto(
     val status: String,
     val failureReason: String?,
     val facebookPostId: String?,
-    val pageId: String? = null
+    val pageId: String? = null,
+    val media: List<MediaDto>? = null
 )
 
 data class CreatePostRequest(
@@ -107,6 +114,9 @@ interface PlannerApi {
 
     @PATCH("api/posts/{id}")
     suspend fun updatePost(@Path("id") id: String, @Body req: UpdatePostRequest): PostDto
+
+    @DELETE("api/posts/{id}")
+    suspend fun deletePost(@Path("id") id: String)
 
     @DELETE("api/posts/{id}/media")
     suspend fun clearMedia(@Path("id") id: String): PostDto

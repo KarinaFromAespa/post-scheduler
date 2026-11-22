@@ -52,6 +52,8 @@ class PublishViewModel(app: Application) : AndroidViewModel(app) {
             .onFailure { _error.value = it.message }
     }
 
-    fun delete(post: Post) = viewModelScope.launch { repo.deletePost(post.id) }
+    fun delete(post: Post) = viewModelScope.launch {
+        runCatching { repo.deletePost(post.id) }.onFailure { _error.value = it.message }
+    }
     fun clearError() { _error.value = null }
 }
