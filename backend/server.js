@@ -188,7 +188,7 @@ app.patch('/api/posts/:id', (req, res) => {
   if (post.status === 'published' || post.status === 'publishing') {
     return res.status(400).json({ error: 'a published post cannot be edited' });
   }
-  const { type, caption, hashtags, scheduledAt, status, pageId, tempMediaIds } = req.body || {};
+  const { type, caption, hashtags, scheduledAt, status, pageId, tempMediaIds, keepMedia } = req.body || {};
   if (type !== undefined && !TYPES.has(type)) {
     return res.status(400).json({ error: 'type must be post, reel or story' });
   }
@@ -221,9 +221,24 @@ app.patch('/api/posts/:id', (req, res) => {
   if (pageId !== undefined) post.pageId = pageId || null;
   if (status !== undefined) post.status = status;
   if (post.status === 'scheduled' && !post.scheduledAt) post.status = 'draft';
-  // Files uploaded in the background while editing replace the old ones:
-  // delete the old files, then claim the staged ones into the post.
-  if (Array.isArray(tempMediaIds) && tempMediaIds.length > 0) {
+  // Removing individual photos while editing: keepMedia lists the existing
+  // files to keep (by URL basename — the client's media URL ends in the
+  // file's basename, which matches the stored path's basename). Files not
+  // listed are deleted from disk and both buckets. Staged files are then
+  // appended to the kept ones. Without keepMedia, staged files replace
+  // everything (the old "pick new ones to replace them" flow).
+  if (Array.isArray(keepMedia)) {
+    const keep = new Set(keepMedia.map((u) => String(u).split('/').pop()));
+    const removed = (post.mediaFiles || []).filter((f) => !keep.has(path.basename(f.path)));
+    const kept = (post.mediaFiles || []).filter((f) => keep.has(path.basename(f.path)));
+    if (removed.length) media.deleteMedia({ mediaFiles: removed });
+    post.mediaFiles = kept;
+    if (Array.isArray(tempMediaIds) && tempMediaIds.length > 0) {
+      post.mediaFiles = [...kept, ...store.claimTempMedia(tempMediaIds)];
+    }
+  } else if (Array.isArray(tempMediaIds) && tempMediaIds.length > 0) {
+    // Files uploaded in the background while editing replace the old ones:
+    // delete the old files, then claim the staged ones into the post.
     media.deleteMedia(post);
     post.mediaFiles = store.claimTempMedia(tempMediaIds);
   }
