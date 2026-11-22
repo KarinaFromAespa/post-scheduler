@@ -115,16 +115,15 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
                         selected = currentTab == tab,
                         onClick = {
                             if (tab == Tab.CREATE) postToEdit = null
-                            // The Page screen is a non-tab destination stacked
-                            // on top of the tabs. A plain tab navigate does
-                            // not leave it — tapping Create kept showing the
-                            // Page screen until the system Back button was
-                            // used — so pop it first and then switch tabs
-                            // from the tab underneath, where tab switching
-                            // works.
-                            if (currentRoute == "page") nav.popBackStack()
+                            // A screen pushed on top of a tab — the Page
+                            // screen, or Create reached from Publish's
+                            // "Schedule a post" — is not a tab, so a plain
+                            // tab navigate leaves it in place and the tap
+                            // looks dead (only the system Back button got
+                            // back to the tab). Unwind to the start
+                            // destination first, then switch tabs.
+                            nav.popBackStack(nav.graph.startDestinationId, inclusive = false, saveState = true)
                             nav.navigate(tab.route) {
-                                popUpTo(nav.graph.startDestinationId) { saveState = true }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -147,8 +146,8 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
                 FloatingActionButton(
                     onClick = {
                         postToEdit = null
+                        nav.popBackStack(nav.graph.startDestinationId, inclusive = false, saveState = true)
                         nav.navigate(Tab.CREATE.route) {
-                            popUpTo(nav.graph.startDestinationId) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
                         }
@@ -182,11 +181,11 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
                 CreateScreen(
                     onDone = {
                         postToEdit = null
-                        nav.navigate(Tab.PUBLISH.route) {
-                            popUpTo(nav.graph.startDestinationId) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
+                        // Saving always returns to Publish, the start
+                        // destination — unwind there directly instead of
+                        // navigating to it, so a Create screen pushed on
+                        // top of a tab is reliably left behind.
+                        nav.popBackStack(nav.graph.startDestinationId, inclusive = false, saveState = true)
                     },
                     onConnectPage = { nav.navigate("page") { launchSingleTop = true } },
                     editPost = postToEdit
