@@ -54,7 +54,8 @@ data class UpdatePostRequest(
     val scheduledAt: String? = null,
     val status: String? = null,
     val pageId: String? = null,
-    val tempMediaIds: List<String>? = null
+    val tempMediaIds: List<String>? = null,
+    val keepMedia: List<String>? = null
 )
 
 // A file staged by the background upload (POST /api/media/temp). The id

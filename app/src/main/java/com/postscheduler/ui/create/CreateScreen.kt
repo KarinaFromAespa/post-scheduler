@@ -1,5 +1,6 @@
 package com.postscheduler.ui.create
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -95,30 +96,34 @@ fun CreateScreen(
     val selectedPageId by vm.selectedPageId.collectAsState()
     val pickedMedia by vm.media.collectAsState()
     val hasPendingUploads by vm.hasPendingUploads.collectAsState()
+    val keptExisting by vm.keptExisting.collectAsState()
+    // Caption, schedule and draft flag live in the ViewModel (not here)
+    // so the tab-switch dialog can save without this screen.
+    val caption by vm.caption.collectAsState()
+    val schedule by vm.schedule.collectAsState()
+    val saveAsDraft by vm.saveAsDraft.collectAsState()
     var pageMenuExpanded by remember { mutableStateOf(false) }
 
-    var caption by remember { mutableStateOf(editPost?.caption ?: "") }
-    var schedule by remember { mutableStateOf<Long?>(editPost?.scheduledAtMillis ?: vm.defaultScheduleMillis()) }
-    // When true the composer saves as a draft (keeping any picked time as
-    // the draft's planned time) instead of scheduling it.
-    var saveAsDraft by remember { mutableStateOf(false) }
     var scheduleError by remember { mutableStateOf<String?>(null) }
 
     // Editing a scheduled post: pre-fill the form and tell the ViewModel
-    // to PATCH this post on save instead of creating a new one.
+    // to PATCH this post on save instead of creating a new one. Opening
+    // Create fresh after an edit resets the composer, so a new post never
+    // inherits the previous edit's text or time.
     LaunchedEffect(editPost?.id) {
         if (editPost != null) {
             vm.loadForEdit(editPost)
-            caption = editPost.caption
             // A past planned/scheduled time must be changed before it can
             // be scheduled again — prompt for a new time.
             val t = editPost.scheduledAtMillis
             if (t != null && t < System.currentTimeMillis() + 2 * 60 * 1000) {
-                schedule = null
+                vm.setSchedule(null)
                 scheduleError = "This post's planned time has passed — pick a new time."
             } else {
-                schedule = t
+                scheduleError = null
             }
+        } else if (vm.editing) {
+            vm.resetComposer()
         }
     }
 
@@ -169,10 +174,37 @@ fun CreateScreen(
         vm.resetDone()
     }
 
-    // Stories carry no caption even if text was typed before switching
-    // type, so nothing stale is saved with a story.
-    fun storySafe(text: String) = if (type == PostType.STORY) "" else text
+    // The system back button leaves the composer the same way a tab tap
+    // does — with unsaved changes it asks first instead of dropping them.
+    val dirty by vm.dirty.collectAsState()
+    var showUnsavedDialog by remember { mutableStateOf(false) }
+    BackHandler(enabled = dirty) { showUnsavedDialog = true }
+    if (showUnsavedDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnsavedDialog = false },
+            title = { Text("Unsaved changes") },
+            text = { Text("You have unsaved changes on this post. Save them before leaving?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showUnsavedDialog = false
+                    vm.save(publishNow = false)
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        showUnsavedDialog = false
+                        vm.resetComposer()
+                        onDone()
+                    }) { Text("Discard") }
+                    TextButton(onClick = { showUnsavedDialog = false }) { Text("Cancel") }
+                }
+            }
+        )
+    }
 
+    // Stories carry no caption — the ViewModel blanks it on save even if
+    // text was typed before switching type.
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
     ) {
@@ -285,7 +317,7 @@ fun CreateScreen(
         // in the caption.
         if (type != PostType.STORY) {
             OutlinedTextField(
-                value = caption, onValueChange = { caption = it },
+                value = caption, onValueChange = { vm.setCaption(it) },
                 label = { Text("Caption") },
                 placeholder = { Text("Write a caption…") },
                 modifier = Modifier.fillMaxWidth().height(140.dp),
@@ -346,20 +378,21 @@ fun CreateScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-        } else if (editPost != null && editPost.mediaList.isNotEmpty()) {
+        } else if (editPost != null && keptExisting.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             MediaRow(
-                items = editPost.mediaList.map {
+                items = keptExisting.map {
                     com.postscheduler.ui.components.ComposerMedia(uri = it)
                 },
                 isVideo = type == PostType.REEL || editPost.mediaKind == "video",
+                onRemove = { uri -> vm.removeExistingMedia(uri) },
                 dimAfter = if (type == PostType.STORY) 1 else Int.MAX_VALUE
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                if (type == PostType.STORY && editPost.mediaList.size > 1)
-                    "This post has ${editPost.mediaList.size} photos — a story uses one file only. Pick a new one to replace them."
-                else "${editPost.mediaList.size} photo${if (editPost.mediaList.size > 1) "s" else ""} on this post — pick new ones to replace them.",
+                if (type == PostType.STORY && keptExisting.size > 1)
+                    "This post has ${keptExisting.size} photos — a story uses one file only. Pick a new one to replace them."
+                else "${keptExisting.size} photo${if (keptExisting.size > 1) "s" else ""} on this post — tap ✕ to remove one, or pick new ones to replace them.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -403,13 +436,13 @@ fun CreateScreen(
         }
         Spacer(Modifier.height(8.dp))
         Row {
-            OutlinedButton(onClick = { schedule = vm.defaultScheduleMillis(); saveAsDraft = false }) {
+            OutlinedButton(onClick = { vm.setSchedule(vm.defaultScheduleMillis()); vm.setSaveAsDraft(false) }) {
                 Text("Next hour")
             }
             OutlinedButton(
                 // Keeps any picked time as the draft's planned time — it
                 // does NOT clear the time.
-                onClick = { saveAsDraft = true },
+                onClick = { vm.setSaveAsDraft(true) },
                 modifier = Modifier.padding(start = 8.dp)
             ) { Text("Save as draft") }
         }
@@ -420,14 +453,21 @@ fun CreateScreen(
         Spacer(Modifier.height(20.dp))
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(
-            onClick = { vm.save(storySafe(caption), schedule, publishNow = false, saveAsDraft = saveAsDraft) },
+            onClick = { vm.save(publishNow = false) },
             enabled = !saving && !hasPendingUploads, modifier = Modifier.fillMaxWidth()
         ) { Text(if (editPost != null) "Save changes" else if (saveAsDraft || schedule == null) "Save draft" else "Add to Queue") }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
-            onClick = { vm.save(storySafe(caption), null, publishNow = true) },
+            onClick = { vm.save(publishNow = true) },
             enabled = !saving && !hasPendingUploads, modifier = Modifier.fillMaxWidth()
         ) { Text("Publish now") }
+        if (editPost != null) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(
+                onClick = { vm.resetComposer(); onDone() },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Cancel edit") }
+        }
         Spacer(Modifier.height(8.dp))
         if (pageName == null) {
             Text(
@@ -470,8 +510,8 @@ fun CreateScreen(
                     if (picked < System.currentTimeMillis() + 2 * 60 * 1000) {
                         scheduleError = "Pick a time at least 2 minutes ahead."
                     } else {
-                        schedule = picked
-                        saveAsDraft = false
+                        vm.setSchedule(picked)
+                        vm.setSaveAsDraft(false)
                         scheduleError = null
                     }
                     showTimePicker = false

@@ -35,7 +35,12 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.facebook.CallbackManager
 import com.postscheduler.data.local.Post
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.postscheduler.ui.create.CreateScreen
+import com.postscheduler.ui.create.CreateViewModel
 import com.postscheduler.ui.drafts.DraftsScreen
 import com.postscheduler.ui.insights.InsightsScreen
 import com.postscheduler.ui.page.PageScreen
@@ -84,6 +89,22 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
     // The scheduled post being edited, if any — set from Publish's Edit
     // action, cleared once the edit is saved or abandoned.
     var postToEdit by remember { mutableStateOf<Post?>(null) }
+    // The composer ViewModel lives at activity scope so the bottom nav can
+    // ask "are there unsaved changes?" before switching tabs. Its caption,
+    // schedule and draft flag live in the ViewModel for the same reason.
+    val createVm: CreateViewModel = viewModel()
+    val composerDirty by createVm.dirty.collectAsState()
+    // A tab the user tried to open while the composer has unsaved changes
+    // — the dialog asks whether to save, discard, or stay.
+    var pendingTab by remember { mutableStateOf<Tab?>(null) }
+
+    fun switchTab(tab: Tab) {
+        nav.popBackStack(nav.graph.startDestinationId, inclusive = false, saveState = true)
+        nav.navigate(tab.route) {
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -114,6 +135,13 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
                     NavigationBarItem(
                         selected = currentTab == tab,
                         onClick = {
+                            // Leaving the composer with unsaved changes
+                            // asks first — switching tabs would otherwise
+                            // silently drop the edit.
+                            if (currentTab == Tab.CREATE && composerDirty && tab != Tab.CREATE) {
+                                pendingTab = tab
+                                return@NavigationBarItem
+                            }
                             if (tab == Tab.CREATE) postToEdit = null
                             // A screen pushed on top of a tab — the Page
                             // screen, or Create reached from Publish's
@@ -122,11 +150,7 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
                             // looks dead (only the system Back button got
                             // back to the tab). Unwind to the start
                             // destination first, then switch tabs.
-                            nav.popBackStack(nav.graph.startDestinationId, inclusive = false, saveState = true)
-                            nav.navigate(tab.route) {
-                                launchSingleTop = true
-                                restoreState = true
-                            }
+                            switchTab(tab)
                         },
                         icon = {
                             when (tab) {
@@ -146,11 +170,7 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
                 FloatingActionButton(
                     onClick = {
                         postToEdit = null
-                        nav.popBackStack(nav.graph.startDestinationId, inclusive = false, saveState = true)
-                        nav.navigate(Tab.CREATE.route) {
-                            launchSingleTop = true
-                            restoreState = true
-                        }
+                        switchTab(Tab.CREATE)
                     },
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -188,7 +208,8 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
                         nav.popBackStack(nav.graph.startDestinationId, inclusive = false, saveState = true)
                     },
                     onConnectPage = { nav.navigate("page") { launchSingleTop = true } },
-                    editPost = postToEdit
+                    editPost = postToEdit,
+                    vm = createVm
                 )
             }
             composable(Tab.DRAFTS.route) {
@@ -206,5 +227,34 @@ private fun PlannerNav(fbCallbackManager: CallbackManager) {
             composable(Tab.INSIGHTS.route) { InsightsScreen() }
             composable("page") { PageScreen(callbackManager = fbCallbackManager) }
         }
+    }
+
+    // Unsaved-changes dialog, shown when a tab tap is blocked. Save keeps
+    // the edit (the save lands on Publish, the normal post-save screen);
+    // Discard drops it and opens the tab that was tapped; Cancel stays.
+    val target = pendingTab
+    if (target != null) {
+        AlertDialog(
+            onDismissRequest = { pendingTab = null },
+            title = { Text("Unsaved changes") },
+            text = { Text("You have unsaved changes on this post. Save them before leaving?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingTab = null
+                    createVm.save(publishNow = false)
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                androidx.compose.foundation.layout.Row {
+                    TextButton(onClick = {
+                        pendingTab = null
+                        createVm.resetComposer()
+                        postToEdit = null
+                        switchTab(target)
+                    }) { Text("Discard") }
+                    TextButton(onClick = { pendingTab = null }) { Text("Cancel") }
+                }
+            }
+        )
     }
 }

@@ -46,6 +46,7 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
     fun addMedia(uris: List<Uri>) {
         val fresh = uris.filter { uri -> _media.value.none { it.uri == uri } }
         if (fresh.isEmpty()) return
+        _dirty.value = true
         _media.value = _media.value + fresh.map { PickedMedia(it, UploadState.UPLOADING, isVideo = isVideoUri(it)) }
         for (uri in fresh) {
             viewModelScope.launch {
@@ -88,6 +89,7 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
     // tile is gone either way.
     fun removeMedia(picked: PickedMedia) {
         _media.value = _media.value.filter { it.uri != picked.uri }
+        _dirty.value = true
         picked.tempId?.let { id ->
             viewModelScope.launch { repo.deleteTempMedia(id) }
         }
@@ -171,22 +173,75 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
     private val _done = MutableStateFlow(false)
     val done: StateFlow<Boolean> = _done.asStateFlow()
 
-    fun setType(t: PostType) { _type.value = t }
+    fun setType(t: PostType) { _type.value = t; _dirty.value = true }
+
+    // The composer's text, schedule and draft flag live here (not in the
+    // screen) so the activity can ask "are there unsaved changes?" and
+    // trigger a save from the tab-switch dialog. The screen reads them
+    // and writes them back through the setters, which mark the composer
+    // dirty. Loading a post for edit sets them directly (no dirty mark)
+    // and clears the flag — the loaded post is the baseline.
+    private val _caption = MutableStateFlow("")
+    val caption: StateFlow<String> = _caption.asStateFlow()
+    private val _schedule = MutableStateFlow<Long?>(defaultScheduleMillis())
+    val schedule: StateFlow<Long?> = _schedule.asStateFlow()
+    private val _saveAsDraft = MutableStateFlow(false)
+    val saveAsDraft: StateFlow<Boolean> = _saveAsDraft.asStateFlow()
+    private val _dirty = MutableStateFlow(false)
+    val dirty: StateFlow<Boolean> = _dirty.asStateFlow()
+
+    fun setCaption(text: String) { _caption.value = text; _dirty.value = true }
+    fun setSchedule(ms: Long?) { _schedule.value = ms; _dirty.value = true }
+    fun setSaveAsDraft(v: Boolean) { _saveAsDraft.value = v; _dirty.value = true }
+
+    // Back to a fresh composer (Discard / Cancel / after a save). Staged
+    // temp files are deleted from the server; existing media is just
+    // forgotten locally — the backend only deletes files on a save. The
+    // schedule resets to the next hour, the same default a fresh composer
+    // has always had.
+    fun resetComposer() {
+        clearMedia()
+        editingPost = null
+        _keptExisting.value = emptyList()
+        _caption.value = ""
+        _schedule.value = defaultScheduleMillis()
+        _saveAsDraft.value = false
+        _dirty.value = false
+    }
 
     // The post being edited, if any — set by loadForEdit. When set, save()
     // PATCHes this post instead of creating a new one.
     private var editingPost: com.postscheduler.data.local.Post? = null
     val editing: Boolean get() = editingPost != null
 
+    // Photos already on the post being edited that are still kept. The
+    // editor shows them as removable tiles; removing one drops it from
+    // this list, and save() sends the survivors as keepMedia so the
+    // backend deletes the removed files.
+    private val _keptExisting = MutableStateFlow<List<String>>(emptyList())
+    val keptExisting: StateFlow<List<String>> = _keptExisting.asStateFlow()
+
+    fun removeExistingMedia(uri: String) {
+        _keptExisting.value = _keptExisting.value.filter { it != uri }
+        _dirty.value = true
+    }
+
     fun loadForEdit(post: com.postscheduler.data.local.Post) {
         clearMedia()
         editingPost = post
+        _keptExisting.value = post.mediaList
         _type.value = post.type
+        _caption.value = post.caption
+        _schedule.value = post.scheduledAtMillis
+        _saveAsDraft.value = false
+        _dirty.value = false
     }
 
     fun clearEdit() {
         clearMedia()
         editingPost = null
+        _keptExisting.value = emptyList()
+        _dirty.value = false
     }
 
     /** Next hourly slot today, defaulting to the next hour (min 2 min ahead is enforced by the backend). */
@@ -197,12 +252,14 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         return cal.timeInMillis
     }
 
-    fun save(
-        caption: String,
-        scheduledAtMillis: Long?,
-        publishNow: Boolean,
-        saveAsDraft: Boolean = false
-    ) = viewModelScope.launch {
+    fun save(publishNow: Boolean) = viewModelScope.launch {
+        // Caption, schedule and draft flag live in this ViewModel (not the
+        // screen) so the tab-switch dialog can save without the screen.
+        // Stories carry no caption even if text was typed before switching
+        // type, so nothing stale is saved with a story.
+        val caption = if (_type.value == PostType.STORY) "" else _caption.value
+        val scheduledAtMillis = _schedule.value
+        val saveAsDraft = _saveAsDraft.value
         // Wait for any background upload still in flight — a post cannot
         // link to a file that is not on the server yet. The save button
         // is disabled while uploads run, so this is a safety net.
@@ -222,9 +279,10 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         // blocked editing a story that already has its one photo or video
         // ("Add text or media first" / "A story needs exactly one photo
         // or video"), and let a multi-photo post slip past the story check
-        // when no new file was picked.
+        // when no new file was picked. The kept list shrinks when the user
+        // removes a photo in the editor, so the count follows the removal.
         val effectiveMediaCount = if (mediaUris.isNotEmpty()) mediaUris.size
-            else editingPost?.mediaList?.size ?: 0
+            else _keptExisting.value.size
         if (caption.isBlank() && effectiveMediaCount == 0) {
             _error.value = "Add text or media first."
             return@launch
@@ -247,14 +305,26 @@ class CreateViewModel(app: Application) : AndroidViewModel(app) {
         runCatching {
             val editing = editingPost
             if (editing != null) {
-                val updated = repo.updatePost(editing, _type.value, caption, mediaUris, tempMediaIds, scheduledAtMillis, saveAsDraft)
+                // No new picks: keepMedia lists the surviving photos (by
+                // URL basename) so the backend deletes the removed ones.
+                // With new picks the old photos are all replaced instead.
+                val keepMedia = if (tempMediaIds.isEmpty()) {
+                    _keptExisting.value.map { it.substringAfterLast("/") }.filter { it.isNotBlank() }
+                } else null
+                val updated = repo.updatePost(
+                    editing, _type.value, caption, mediaUris, tempMediaIds, scheduledAtMillis, saveAsDraft,
+                    keptExistingMedia = if (tempMediaIds.isEmpty()) _keptExisting.value else emptyList(),
+                    keepMedia = keepMedia
+                )
                 if (publishNow) repo.publishNow(updated)
                 editingPost = null
+                _keptExisting.value = emptyList()
             } else {
                 repo.createPost(_type.value, caption, mediaUris, tempMediaIds, scheduledAtMillis, publishNow, saveAsDraft)
             }
         }.onSuccess {
             resetMediaAfterSave()
+            resetComposer()
             _done.value = true
         }
             .onFailure { _error.value = "Saved locally, backend sync failed: ${it.message}" }

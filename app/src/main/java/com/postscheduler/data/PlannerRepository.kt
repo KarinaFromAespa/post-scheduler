@@ -226,12 +226,20 @@ class PlannerRepository(context: Context) {
         mediaUris: List<Uri>,
         tempMediaIds: List<String>,
         scheduledAtMillis: Long?,
-        saveAsDraft: Boolean = false
+        saveAsDraft: Boolean = false,
+        // Photos already on the post that are still kept (after the user
+        // removed some in the editor). Only used when no new photos were
+        // picked — new picks replace everything. The backend gets the same
+        // list as keepMedia (by URL basename) so it deletes the removed
+        // files; the local row keeps the kept URLs for its thumbnail.
+        keptExistingMedia: List<String> = emptyList(),
+        keepMedia: List<String>? = null
     ): Post {
+        val keptUris = keptExistingMedia.joinToString(",")
         val updated = post.copy(
             type = type,
             caption = caption.trim(),
-            mediaUris = if (mediaUris.isNotEmpty()) mediaUris.joinToString(",") { it.toString() } else post.mediaUris,
+            mediaUris = if (mediaUris.isNotEmpty()) mediaUris.joinToString(",") { it.toString() } else keptUris.ifEmpty { post.mediaUris },
             mediaKind = if (mediaUris.isNotEmpty()) mediaKindFor(type, mediaUris) else post.mediaKind,
             scheduledAtMillis = scheduledAtMillis,
             status = if (saveAsDraft || scheduledAtMillis == null) PostStatus.DRAFT else PostStatus.SCHEDULED,
@@ -247,7 +255,8 @@ class PlannerRepository(context: Context) {
                     type = type.toApi(), caption = updated.caption,
                     scheduledAt = scheduledAtMillis?.let { iso(it) },
                     status = updated.status.toApi(), pageId = currentPageId(),
-                    tempMediaIds = tempMediaIds.ifEmpty { null }
+                    tempMediaIds = tempMediaIds.ifEmpty { null },
+                    keepMedia = keepMedia
                 )
             )
         }.onFailure { e ->
