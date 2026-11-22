@@ -3,6 +3,7 @@
 // durable store, so a lost VM loses nothing. Facebook keeps fetching from
 // the backend's /uploads URL exactly as before; no PAR is needed for that.
 const fs = require('fs');
+const { Readable } = require('stream');
 const common = require('oci-common');
 const os = require('oci-objectstorage');
 const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
@@ -21,14 +22,17 @@ function neonConfigured() {
     && process.env.NEON_S3_SECRET_ACCESS_KEY);
 }
 
-let ociClient = null;
+let ociClientPromise = null;
 function getOciClient() {
-  if (!ociClient) {
-    const provider = new common.InstancePrincipalsAuthenticationDetailsProviderBuilder().build();
-    ociClient = new os.ObjectStorageClient({ authenticationDetailsProvider: provider });
-    ociClient.region = common.Region.fromRegionId(OCI_REGION);
+  if (!ociClientPromise) {
+    ociClientPromise = (async () => {
+      const provider = await new common.InstancePrincipalsAuthenticationDetailsProviderBuilder().build();
+      const client = new os.ObjectStorageClient({ authenticationDetailsProvider: provider });
+      client.region = common.Region.fromRegionId(OCI_REGION);
+      return client;
+    })();
   }
-  return ociClient;
+  return ociClientPromise;
 }
 
 let s3Client = null;
@@ -49,7 +53,8 @@ function getS3Client() {
 
 async function uploadToOracle(objectName, filePath, mimetype) {
   const stat = fs.statSync(filePath);
-  await getOciClient().putObject({
+  const client = await getOciClient();
+  await client.putObject({
     namespaceName: OCI_NAMESPACE,
     bucketName: OCI_BUCKET,
     objectName,
@@ -69,7 +74,8 @@ async function uploadToNeon(objectName, filePath, mimetype) {
 }
 
 async function deleteFromOracle(objectName) {
-  await getOciClient().deleteObject({
+  const client = await getOciClient();
+  await client.deleteObject({
     namespaceName: OCI_NAMESPACE, bucketName: OCI_BUCKET, objectName,
   });
 }
@@ -81,15 +87,17 @@ async function deleteFromNeon(objectName) {
 // Re-download a bucket object to the local cache (startup recovery when a
 // local file is missing, e.g. after the VM was rebuilt).
 async function downloadFromOracle(objectName, destPath) {
-  const res = await getOciClient().getObject({
+  const client = await getOciClient();
+  const res = await client.getObject({
     namespaceName: OCI_NAMESPACE, bucketName: OCI_BUCKET, objectName,
   });
   await new Promise((resolve, reject) => {
     const out = fs.createWriteStream(destPath);
-    res.value.pipe(out);
+    const src = Readable.fromWeb(res.value);
+    src.pipe(out);
     out.on('finish', resolve);
     out.on('error', reject);
-    res.value.on('error', reject);
+    src.on('error', reject);
   });
 }
 
