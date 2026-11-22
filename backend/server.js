@@ -11,6 +11,23 @@ const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// API key auth: every /api/* call must send X-Api-Key matching the
+// API_KEY env var. /uploads stays public (Facebook fetches media from it
+// with no key) and /health + / stay public for monitoring. When no
+// API_KEY is set the check is skipped, so a missing env var can't lock
+// the backend out — set API_KEY on the VM to enforce it.
+const API_KEY = process.env.API_KEY || null;
+app.use('/api', (req, res, next) => {
+  if (!API_KEY) return next();
+  const supplied = req.headers['x-api-key'];
+  if (typeof supplied === 'string' && supplied.length > 0) {
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(API_KEY);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+  }
+  return res.status(401).json({ error: 'API key required' });
+});
+
 const PORT = Number(process.env.PORT || 3000);
 const TYPES = new Set(['post', 'reel', 'story']);
 const STATUSES = new Set(['draft', 'scheduled', 'publishing', 'published', 'failed']);
