@@ -1,5 +1,6 @@
 package com.postscheduler.ui.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -112,42 +113,44 @@ fun PostCard(
                 )
                 Spacer(Modifier.weight(1f))
                 if (onPublishNow != null || onDelete != null || onRetry != null || onEdit != null || onUpdateSchedule != null) {
-                    IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Post options")
-                    }
-                    DropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { menuOpen = false }
-                    ) {
-                        onRetry?.let { retry ->
-                            DropdownMenuItem(
-                                text = { Text("Retry") },
-                                onClick = { menuOpen = false; retry() }
-                            )
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Post options")
                         }
-                        onPublishNow?.let { publishNow ->
-                            DropdownMenuItem(
-                                text = { Text("Publish now") },
-                                onClick = { menuOpen = false; publishNow() }
-                            )
-                        }
-                        onUpdateSchedule?.let { reschedule ->
-                            DropdownMenuItem(
-                                text = { Text("Update schedule") },
-                                onClick = { menuOpen = false; reschedule() }
-                            )
-                        }
-                        onEdit?.let { edit ->
-                            DropdownMenuItem(
-                                text = { Text("Edit") },
-                                onClick = { menuOpen = false; edit() }
-                            )
-                        }
-                        onDelete?.let { delete ->
-                            DropdownMenuItem(
-                                text = { Text("Delete") },
-                                onClick = { menuOpen = false; delete() }
-                            )
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            onRetry?.let { retry ->
+                                DropdownMenuItem(
+                                    text = { Text("Retry") },
+                                    onClick = { menuOpen = false; retry() }
+                                )
+                            }
+                            onPublishNow?.let { publishNow ->
+                                DropdownMenuItem(
+                                    text = { Text("Publish now") },
+                                    onClick = { menuOpen = false; publishNow() }
+                                )
+                            }
+                            onUpdateSchedule?.let { reschedule ->
+                                DropdownMenuItem(
+                                    text = { Text("Update schedule") },
+                                    onClick = { menuOpen = false; reschedule() }
+                                )
+                            }
+                            onEdit?.let { edit ->
+                                DropdownMenuItem(
+                                    text = { Text("Edit") },
+                                    onClick = { menuOpen = false; edit() }
+                                )
+                            }
+                            onDelete?.let { delete ->
+                                DropdownMenuItem(
+                                    text = { Text("Delete") },
+                                    onClick = { menuOpen = false; delete() }
+                                )
+                            }
                         }
                     }
                 }
