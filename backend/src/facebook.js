@@ -117,11 +117,19 @@ async function publishStory(post, mediaFiles, page) {
   if (!mediaFiles[0].mimetype.startsWith('image/')) {
     return { ok: false, reason: 'Story needs one photo or video' };
   }
-  const body = await graph(`/${page.id}/stories`, {
-    params: { photo_url: mediaFiles[0].url },
+  // Photo stories are a two-step flow: upload the photo unpublished to
+  // get a photo_id, then publish that id to the photo_stories edge.
+  // POST /{page-id}/stories with a photo_url is not a publish call —
+  // Facebook rejects it as "does not support this operation" (100/33).
+  const uploaded = await graph(`/${page.id}/photos`, {
+    params: { url: mediaFiles[0].url, published: 'false' },
     method: 'POST', token: page.token,
   });
-  return { ok: true, facebookPostId: body.id };
+  const body = await graph(`/${page.id}/photo_stories`, {
+    params: { photo_id: uploaded.id },
+    method: 'POST', token: page.token,
+  });
+  return { ok: true, facebookPostId: body.id || body.post_id };
 }
 
 // Video stories need a three-phase upload: open a session, upload the
