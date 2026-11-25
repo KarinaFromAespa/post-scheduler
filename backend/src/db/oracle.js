@@ -3,6 +3,11 @@
 // TCPS connect string + ADMIN user + password from env.
 const oracledb = require('oracledb');
 
+// The caption column is a CLOB (Facebook allows 63,206 chars, far past
+// VARCHAR2's 4000-byte ceiling). Fetch CLOBs as plain strings so the
+// row readers below keep getting JS strings, not Lob streams.
+oracledb.fetchAsString = [oracledb.CLOB];
+
 let pool = null;
 
 function configured() {

@@ -3,7 +3,7 @@
 CREATE TABLE posts (
   id VARCHAR2(36) PRIMARY KEY,
   type VARCHAR2(20) NOT NULL,
-  caption VARCHAR2(4000) DEFAULT '',
+  caption CLOB DEFAULT '',
   hashtags VARCHAR2(4000),
   scheduled_at TIMESTAMP,
   status VARCHAR2(20) NOT NULL,

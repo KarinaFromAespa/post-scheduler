@@ -27,6 +27,9 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 // API_KEY is set the check is skipped, so a missing env var can't lock
 // the backend out — set API_KEY on the VM to enforce it.
 const API_KEY = process.env.API_KEY || null;
+// Facebook posts allow up to 63,206 characters; the backend matches that
+// limit instead of imposing its own shorter one.
+const MAX_CAPTION_CHARS = 63206;
 app.use('/api', (req, res, next) => {
   if (!API_KEY) return next();
   const supplied = req.headers['x-api-key'];
@@ -90,8 +93,8 @@ app.post('/api/posts', (req, res) => {
   if (!TYPES.has(type)) return res.status(400).json({ error: 'type must be post, reel or story' });
   // Caption may be empty (stories have none; a reel or post can be media-only).
   // The clients still require text OR media before they send anything.
-  if (typeof caption !== 'string' || caption.length > 1024) {
-    return res.status(400).json({ error: 'caption must be a string, max 1024 chars' });
+  if (typeof caption !== 'string' || caption.length > MAX_CAPTION_CHARS) {
+    return res.status(400).json({ error: `caption must be a string, max ${MAX_CAPTION_CHARS} chars` });
   }
   if (scheduledAt && Number.isNaN(Date.parse(scheduledAt))) {
     return res.status(400).json({ error: 'scheduledAt must be ISO-8601' });
@@ -192,8 +195,8 @@ app.patch('/api/posts/:id', (req, res) => {
   if (type !== undefined && !TYPES.has(type)) {
     return res.status(400).json({ error: 'type must be post, reel or story' });
   }
-  if (caption !== undefined && (typeof caption !== 'string' || caption.length > 1024)) {
-    return res.status(400).json({ error: 'caption must be a string, max 1024 chars' });
+  if (caption !== undefined && (typeof caption !== 'string' || caption.length > MAX_CAPTION_CHARS)) {
+    return res.status(400).json({ error: `caption must be a string, max ${MAX_CAPTION_CHARS} chars` });
   }
   if (scheduledAt !== undefined && scheduledAt !== null && Number.isNaN(Date.parse(scheduledAt))) {
     return res.status(400).json({ error: 'scheduledAt must be ISO-8601' });
